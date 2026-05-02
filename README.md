@@ -9,6 +9,10 @@ That multi-stage race strategy is the core idea of this project.
 
 ![StepTracer hardware](assets/steptracer.png)
 
+## Demo Video
+
+- 3rd race video: [`assets/videos/third-race.mp4`](assets/videos/third-race.mp4)
+
 ## Overview
 
 The project is organized around three race stages:
@@ -49,6 +53,10 @@ This stage keeps the map-based replay logic from the second race, but adds more 
 - more detailed acceleration planning
 
 Instead of always following the line with the same center position, the robot intentionally shifts its trajectory depending on corner shape and surrounding track pattern. This allows faster and smoother cornering.
+
+Related demo:
+
+- 3rd race run video: [`assets/videos/third-race.mp4`](assets/videos/third-race.mp4)
 
 ## Core Modules
 
