@@ -5,6 +5,10 @@ Instead of driving every lap with the same logic, the robot improves its strateg
 
 That multi-stage race strategy is the core idea of this project.
 
+## Hardware Image
+
+![StepTracer hardware](assets/steptracer.png)
+
 ## Overview
 
 The project is organized around three race stages:
@@ -81,6 +85,11 @@ Instead of always following the line with the same center position, the robot in
 - per-section velocity and deceleration planning
 - third-run lateral shift and gain scheduling
 - interrupt-driven sensor and motor control loop
+
+## Detailed Code Analysis
+
+- Third-race deep dive: [`docs/extremerun-analysis.md`](docs/extremerun-analysis.md)
+- Focus areas: `Initial_3rd_Code/main/extremerun.c` and `Initial_3rd_Code/main/Motor.c`
 
 ## Project Idea
 
