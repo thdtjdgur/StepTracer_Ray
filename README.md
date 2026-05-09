@@ -13,6 +13,11 @@ That multi-stage race strategy is the core idea of this project.
 
 - 3rd race video: [`assets/videos/third-race.mp4`](assets/videos/third-race.mp4)
 
+## PCB Files
+
+- `2025_PCB/`: archived PCB project files from the previous board set
+- `2026_PCB/`: updated PCB project files for `main_board.eprj`, `sensor_board.eprj`, and `motor_driver.eprj`
+
 ## Overview
 
 The project is organized around three race stages:
