@@ -15,8 +15,8 @@ That multi-stage race strategy is the core idea of this project.
 
 ## PCB Files
 
-- `2025_PCB/`: archived PCB project files from the previous board set
-- `2026_PCB/`: updated PCB project files for `main_board.eprj`, `sensor_board.eprj`, and `motor_driver.eprj`
+- `HardWare/2025_PCB/`: archived PCB project files from the previous board set
+- `HardWare/2026_PCB/`: updated PCB project files for `main_board.eprj`, `sensor_board.eprj`, and `motor_driver.eprj`
 
 ## Overview
 
@@ -102,7 +102,7 @@ Related demo:
 ## Detailed Code Analysis
 
 - Third-race deep dive: [`docs/extremerun-analysis.md`](docs/extremerun-analysis.md)
-- Focus areas: `Initial_3rd_Code/main/extremerun.c` and `Initial_3rd_Code/main/Motor.c`
+- Focus areas: `SofteWare/Initial_3rd_Code/main/extremerun.c` and `SofteWare/Initial_3rd_Code/main/Motor.c`
 
 ## Project Idea
 

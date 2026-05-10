@@ -1,6 +1,6 @@
 # Extreme Run Code Analysis
 
-This document explains how the third-race logic works in `Initial_3rd_Code/main/extremerun.c` and how that logic is executed at runtime by `Initial_3rd_Code/main/Motor.c`.
+This document explains how the third-race logic works in `SofteWare/Initial_3rd_Code/main/extremerun.c` and how that logic is executed at runtime by `SofteWare/Initial_3rd_Code/main/Motor.c`.
 
 The third race is not just a faster second race. It adds a second layer of optimization on top of the saved map:
 
@@ -12,7 +12,7 @@ The third race is not just a faster second race. It adds a second layer of optim
 
 ## Where the third race starts
 
-The third race still enters through `fast_race()` in `Initial_3rd_Code/main/fastrun.c`.
+The third race still enters through `fast_race()` in `SofteWare/Initial_3rd_Code/main/fastrun.c`.
 When `third_val == 1`, the code runs the following pipeline before the robot starts moving:
 
 1. `all_reset()`
@@ -40,7 +40,7 @@ These are later consumed by `CONTROL_ISR()` in `Motor.c`.
 
 ## Important default constants
 
-These values are initialized mainly in `Initial_3rd_Code/main/search.c` and `Initial_3rd_Code/main/main.c`:
+These values are initialized mainly in `SofteWare/Initial_3rd_Code/main/search.c` and `SofteWare/Initial_3rd_Code/main/main.c`:
 
 - `std_dist = 824`
 - `iq15_chop_dist_amount = _IQ15(1000)`
