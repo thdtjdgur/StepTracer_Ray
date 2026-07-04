@@ -1,5 +1,12 @@
 # StepTracer_Ray
 
+<p align="center">
+  <img src="https://img.shields.io/badge/MCU-TMS320F2808-25344F?style=for-the-badge&labelColor=555555" alt="MCU: TMS320F2808" />
+  <img src="https://img.shields.io/badge/FIRMWARE-C%20%2B%20ASSEMBLY-0C8D7B?style=for-the-badge&labelColor=555555" alt="Firmware: C and Assembly" />
+  <img src="https://img.shields.io/badge/PROJECT-LINE%20TRACER-C65D00?style=for-the-badge&labelColor=555555" alt="Project: Line Tracer" />
+  <img src="https://img.shields.io/badge/IDE-CODE%20COMPOSER%20STUDIO-1F5FDB?style=for-the-badge&labelColor=555555" alt="IDE: Code Composer Studio" />
+</p>
+
 StepTracer_Ray is a competition-oriented line tracer project built around repeated runs on the same track.
 Instead of driving every lap with the same logic, the robot improves its strategy step by step: it first learns the course, then replays it faster, and finally applies more aggressive tuning for maximum performance.
 
