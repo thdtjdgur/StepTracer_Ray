@@ -1,0 +1,46 @@
+{
+    "version": 3,
+    "configurePresets": [
+        {
+            "name": "default",
+            "hidden": true,
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/${presetName}",
+		    "toolchainFile": "${sourceDir}/cmake/gcc-arm-none-eabi.cmake",
+            "environment": {
+                "PATH": "C:/step_tracer/stm_steptracer/StmCubeMx/stm32tools/14.3.1+st.2/bin;$penv{PATH}",
+                "TEMP": "C:/step_tracer/stm_steptracer/StmCubeMx/tmp",
+                "TMP": "C:/step_tracer/stm_steptracer/StmCubeMx/tmp"
+            },
+            "cacheVariables": {
+                "CMAKE_MAKE_PROGRAM": "C:/Users/송성혁/AppData/Local/stm32cube/bundles/ninja/1.13.2+st.1/bin/ninja.exe",
+                "CMAKE_C_COMPILER": "C:/step_tracer/stm_steptracer/StmCubeMx/stm32tools/14.3.1+st.2/bin/arm-none-eabi-gcc.exe",
+                "CMAKE_ASM_COMPILER": "C:/step_tracer/stm_steptracer/StmCubeMx/stm32tools/14.3.1+st.2/bin/arm-none-eabi-gcc.exe"
+            }
+        },
+        {
+            "name": "Debug",
+            "inherits": "default",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug"
+            }
+        },
+        {
+            "name": "Release",
+            "inherits": "default",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release"
+            }
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "Debug",
+            "configurePreset": "Debug"
+        },
+        {
+            "name": "Release",
+            "configurePreset": "Release"
+        }
+    ]
+}
