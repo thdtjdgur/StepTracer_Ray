@@ -1,6 +1,7 @@
-#include "fastrun.h"
+﻿#include "fastrun.h"
 
 #include "Motor.h"
+#include "OLED.h"
 #include "Rom.h"
 #include "extremerun.h"
 #include "search.h"
@@ -8,13 +9,26 @@
 
 #include <math.h>
 #include <stddef.h>
+#include <stdarg.h>
+#include <stdio.h>
 #include <string.h>
 
-#define FAST_MARK_UNDER_RATIO       0.70f
+#include "stm32g4xx_ll_usart.h"
+
+#define FAST_MARK_UNDER_RATIO       0.60f
 #define FAST_MARK_ERROR_MARGIN_MM   150.0f
-#define THIRD_MARK_LEAD_DISTANCE_MM 100.0f
+#define THIRD_MARK_LEAD_DISTANCE_MM 80.0f
 #define FAST_MAX_PROFILE_INDEX      253u
 #define FAST_MAX_MARK_ERRORS        20u
+#define FAST_PROFILE_DUMP_UART      1u
+#define FAST_DEBUG_UART_TIMEOUT     1000000u
+#define FAST_DEBUG_BUFFER_SIZE      160u
+#define FAST_LONG_ACCEL             2900
+#define FAST_MIDDLE_ACCEL           2000
+#define FAST_SHORT_ACCEL            500
+#define FAST_START_ACCEL            3500
+#define FAST_END_ACCEL              2800
+#define FAST_CURVE_ACCEL            3000
 
 static volatile fast_race_mode_t fast_race_mode = FAST_RACE_MODE_NONE;
 static volatile fast_race_status_t fast_race_status = FAST_RACE_IDLE;
@@ -36,6 +50,8 @@ static void fast_reset_runtime(void);
 static void fast_start(fast_race_mode_t mode);
 static void fast_load_segment(uint16_t mark);
 static void fast_replan_adjusted_segment(uint16_t mark);
+static void fast_debug_dump_profile(void);
+static int32_t fast_profile_accel_for_straight(const volatile race_info *line, uint16_t mark);
 static void speed_up_compute(void);
 static void fast_error_compute(void);
 static void fast_third_mark_predict(void);
@@ -45,14 +61,12 @@ static void fast_abort(fast_race_status_t status);
 
 static void fast_turnmark_led_on(void)
 {
-    GPIOA->BSRR = GPIO_PIN_11;
-    GPIOF->BSRR = GPIO_PIN_2;
+    SensorBoardLed_BothOn();
 }
 
 static void fast_turnmark_led_off(void)
 {
-    GPIOA->BSRR = ((uint32_t)GPIO_PIN_11 << 16u);
-    GPIOF->BSRR = ((uint32_t)GPIO_PIN_2 << 16u);
+    SensorBoardLed_Off();
 }
 
 static float fast_clampf(float value, float min_value, float max_value)
@@ -68,35 +82,166 @@ static float fast_clampf(float value, float min_value, float max_value)
     return value;
 }
 
+#if FAST_PROFILE_DUMP_UART != 0u
+static void fast_debug_uart_putc(char ch)
+{
+    uint32_t timeout;
+
+    if (ch == '\n')
+    {
+        fast_debug_uart_putc('\r');
+    }
+
+    timeout = FAST_DEBUG_UART_TIMEOUT;
+    while (LL_USART_IsActiveFlag_TXE_TXFNF(USART1) == 0u)
+    {
+        if (timeout-- == 0u)
+        {
+            return;
+        }
+    }
+
+    LL_USART_TransmitData8(USART1, (uint8_t)ch);
+}
+
+static void fast_debug_uart_flush(void)
+{
+    uint32_t timeout = FAST_DEBUG_UART_TIMEOUT;
+
+    while (LL_USART_IsActiveFlag_TC(USART1) == 0u)
+    {
+        if (timeout-- == 0u)
+        {
+            return;
+        }
+    }
+}
+
+static void fast_debug_printf(const char *format, ...)
+{
+    char buffer[FAST_DEBUG_BUFFER_SIZE];
+    va_list args;
+    int length;
+    int i;
+
+    va_start(args, format);
+    length = vsnprintf(buffer, sizeof(buffer), format, args);
+    va_end(args);
+
+    if (length < 0)
+    {
+        return;
+    }
+
+    for (i = 0; (i < length) && (i < (int)sizeof(buffer)); i++)
+    {
+        fast_debug_uart_putc(buffer[i]);
+    }
+}
+
+static void fast_debug_print_float(const char *label, float value)
+{
+    int32_t scaled;
+    int32_t whole;
+    int32_t frac;
+
+    if (value >= 0.0f)
+    {
+        scaled = (int32_t)((value * 1000.0f) + 0.5f);
+    }
+    else
+    {
+        scaled = (int32_t)((value * 1000.0f) - 0.5f);
+    }
+
+    whole = scaled / 1000;
+    frac = scaled % 1000;
+    if (frac < 0)
+    {
+        frac = -frac;
+    }
+
+    fast_debug_printf("%s: %ld.%03ld\n", label, (long)whole, (long)frac);
+}
+
+static void fast_debug_dump_profile(void)
+{
+    volatile race_info *line;
+    uint16_t i;
+
+    fast_debug_printf("\n\n\n");
+    fast_debug_printf("[FAST PROFILE] mode: %u total: %u base_vel: %lu target_vel: %lu\n\n",
+                      (unsigned)fast_race_mode,
+                      (unsigned)fast_total_mark_count,
+                      (unsigned long)MOTOR_SPEED_U32,
+                      (unsigned long)g_u32_VEL_targetval);
+    fast_debug_printf("[HANDLE] ACC:%ld DEC:%ld\n\n",
+                      (long)ACCEL_COEF_I32,
+                      (long)DECEL_COEF_I32);
+
+    for (i = 0u; i <= fast_total_mark_count; i++)
+    {
+        line = &search_info[i];
+
+        fast_debug_printf("---%u---\n", (unsigned)(i + 1u));
+        fast_debug_printf(" dir: 0x%04lx\nturn_dir: 0x%04lx\n\n",
+                          (unsigned long)line->int32turn_way,
+                          (unsigned long)line->int32turn_dir);
+        fast_debug_printf("S_dist: %ld\n", (long)line->int32dist);
+        fast_debug_print_float("dec_dist", line->dec_dist);
+        fast_debug_printf("\naccel: %ld\n", (long)line->int32accel);
+        fast_debug_print_float("in_vel", line->in_vel);
+        fast_debug_print_float("out_vel", line->out_vel);
+        fast_debug_printf("\n");
+        fast_debug_print_float("m_dist", line->middle_dist);
+        fast_debug_print_float("max_vel", line->vel);
+        fast_debug_print_float("jerk", line->jerk);
+        fast_debug_print_float("decel_acc", line->decel_acc);
+        fast_debug_printf("\n");
+        fast_debug_print_float("chop_sdist", line->chop_sdist);
+        fast_debug_print_float("target_shift", line->target_shift);
+        fast_debug_printf("\n");
+        fast_debug_print_float("chop_shift_before", line->chop_shift_before);
+        fast_debug_print_float("chop_shift_after", line->chop_shift_after);
+        fast_debug_printf("\nDownFlag_U16: %u\n", (unsigned)line->DownFlag_U16);
+        fast_debug_printf("ShiftZeroPrepare_U16: %u\n", (unsigned)line->ShiftZeroPrepare_U16);
+        fast_debug_printf("ShiftZeroHold_U16: %u\n", (unsigned)line->ShiftZeroHold_U16);
+        fast_debug_print_float("Kp_UpDown", line->Kp_UpDown);
+        fast_debug_printf("\n");
+        fast_debug_print_float("under_dist", fast_under_distance[i]);
+        fast_debug_print_float("err_dist", fast_error_distance[i]);
+        fast_debug_printf("\n\n");
+    }
+
+    fast_debug_uart_flush();
+}
+#else
+static void fast_debug_dump_profile(void)
+{
+}
+#endif
+
 static uint8_t fast_is_straight(const volatile race_info *line)
 {
     return ((line->int32turn_dir & (STRAIGHT | END_TURN)) != 0) ? 1u : 0u;
 }
 
-static float fast_acceleration_limit(float velocity)
-{
-    const float limit = MAX_ACC - (ACC_GRADIENT * velocity);
-    return (limit > 0.0f) ? limit : 0.0f;
-}
-
 void decel_dist_compute(float current_velocity,
                         float target_velocity,
-                        float *decel_distance,
-                        float *decel_acceleration)
+                        int32_t accel,
+                        float *decel_distance)
 {
-    const float current_accel = fast_acceleration_limit(current_velocity);
-    const float target_accel = fast_acceleration_limit(target_velocity);
-    float average_accel = (current_accel + target_accel) * 0.5f;
+    float profile_accel = (float)accel;
     float velocity_difference;
 
-    if ((decel_distance == NULL) || (decel_acceleration == NULL))
+    if (decel_distance == NULL)
     {
         return;
     }
 
-    if (average_accel < 1.0f)
+    if (profile_accel < 1.0f)
     {
-        average_accel = 1.0f;
+        profile_accel = 1.0f;
     }
 
     velocity_difference = (current_velocity * current_velocity) -
@@ -106,20 +251,17 @@ void decel_dist_compute(float current_velocity,
         velocity_difference = -velocity_difference;
     }
 
-    *decel_acceleration = average_accel;
-    *decel_distance = velocity_difference / (2.0f * average_accel);
+    *decel_distance = velocity_difference / (2.0f * profile_accel);
 }
 
 void max_vel_compute(float distance,
                      float minus_distance,
                      float current_velocity,
-                     float jerk,
+                     int32_t accel,
                      float *max_velocity)
 {
     float usable_distance;
-    float current_accel;
-    float target_accel;
-    float average_accel;
+    float profile_accel = (float)accel;
     float velocity;
 
     if (max_velocity == NULL)
@@ -127,37 +269,61 @@ void max_vel_compute(float distance,
         return;
     }
 
-    (void)jerk;
     usable_distance = distance - minus_distance;
     if (usable_distance < 0.0f)
     {
         usable_distance = 0.0f;
     }
 
-    current_velocity = (current_velocity > 0.0f) ? current_velocity : 0.0f;
-    current_accel = fast_acceleration_limit(current_velocity);
-    velocity = sqrtf((current_velocity * current_velocity) +
-                     (2.0f * current_accel * usable_distance));
-    if (velocity > MAX_VELO)
+    if (profile_accel < 1.0f)
     {
-        velocity = MAX_VELO;
+        profile_accel = 1.0f;
     }
 
-    target_accel = fast_acceleration_limit(velocity);
-    average_accel = (current_accel + target_accel) * 0.5f;
+    current_velocity = (current_velocity > 0.0f) ? current_velocity : 0.0f;
     velocity = sqrtf((current_velocity * current_velocity) +
-                     (2.0f * average_accel * usable_distance));
+                     (profile_accel * usable_distance));
 
     *max_velocity = fast_clampf(velocity,
                                 (float)MOTOR_SPEED_U32,
                                 (float)SECOND_MAX_SPEED_U32);
 }
 
+static int32_t fast_profile_accel_for_straight(const volatile race_info *line, uint16_t mark)
+{
+    int32_t accel;
+
+    if (line->int32dist > LONG_DIST)
+    {
+        accel = FAST_LONG_ACCEL;
+        if (((line->int32turn_dir & END_TURN) != 0) && (accel > 3000))
+        {
+            accel = 3000;
+        }
+    }
+    else if (line->int32dist > MID_DIST)
+    {
+        accel = FAST_MIDDLE_ACCEL;
+    }
+    else
+    {
+        accel = FAST_SHORT_ACCEL;
+    }
+
+    if (mark == 0u)
+    {
+        accel = FAST_START_ACCEL;
+    }
+    else if ((line->int32turn_dir & END_TURN) != 0)
+    {
+        accel = FAST_END_ACCEL;
+    }
+
+    return accel;
+}
+
 void Fast_ProfileSetCurve(volatile race_info *line, float velocity)
 {
-    float unused_distance;
-    float decel_acceleration;
-
     if (line == NULL)
     {
         return;
@@ -168,11 +334,10 @@ void Fast_ProfileSetCurve(volatile race_info *line, float velocity)
     line->vel = velocity;
     line->out_vel = velocity;
     line->jerk = (float)JERK_U32;
-    decel_dist_compute(velocity, velocity, &unused_distance, &decel_acceleration);
-    line->decel_acc = decel_acceleration;
+    line->decel_acc = (float)FAST_CURVE_ACCEL;
     line->dec_dist = 0.0f;
     line->middle_dist = 0.0f;
-    line->int32accel = (int32_t)(line->decel_acc + 0.5f);
+    line->int32accel = FAST_CURVE_ACCEL;
     line->int32daccel = line->int32accel;
 }
 
@@ -181,10 +346,8 @@ void Fast_ProfilePlanStraight(volatile race_info *line, uint16_t mark)
     float high_velocity;
     float low_velocity;
     float transition_distance;
-    float transition_accel;
     float computed_max_velocity;
     float computed_decel_distance;
-    float computed_decel_accel;
     float distance;
 
     if (line == NULL)
@@ -193,6 +356,8 @@ void Fast_ProfilePlanStraight(volatile race_info *line, uint16_t mark)
     }
 
     distance = (line->int32dist > 0) ? (float)line->int32dist : 0.0f;
+    line->int32accel = fast_profile_accel_for_straight(line, mark);
+    line->int32daccel = line->int32accel;
     line->in_vel = (mark > 0u) ? search_info[mark - 1u].out_vel : 0.0f;
 
     if ((line->int32turn_dir & END_TURN) != 0)
@@ -217,15 +382,19 @@ void Fast_ProfilePlanStraight(volatile race_info *line, uint16_t mark)
 
     decel_dist_compute(line->in_vel,
                        line->out_vel,
-                       &transition_distance,
-                       &transition_accel);
+                       line->int32accel,
+                       &transition_distance);
     line->middle_dist = transition_distance;
-    line->decel_acc = transition_accel;
+    line->decel_acc = (float)line->int32accel;
 
     if (transition_distance >= distance)
     {
         line->dec_dist = distance;
-        max_vel_compute(distance, 0.0f, low_velocity, line->jerk, &computed_max_velocity);
+        max_vel_compute(distance,
+                        0.0f,
+                        low_velocity,
+                        line->int32accel,
+                        &computed_max_velocity);
         line->vel = computed_max_velocity;
 
         if (line->in_vel > line->out_vel)
@@ -241,26 +410,22 @@ void Fast_ProfilePlanStraight(volatile race_info *line, uint16_t mark)
         {
             line->in_vel = 0.0f;
         }
-
     }
     else
     {
         max_vel_compute(distance,
                         transition_distance,
                         high_velocity,
-                        line->jerk,
+                        line->int32accel,
                         &computed_max_velocity);
         line->vel = computed_max_velocity;
         decel_dist_compute(line->vel,
                            line->out_vel,
-                           &computed_decel_distance,
-                           &computed_decel_accel);
+                           line->int32accel,
+                           &computed_decel_distance);
         line->dec_dist = computed_decel_distance;
-        line->decel_acc = computed_decel_accel;
+        line->decel_acc = (float)line->int32accel;
     }
-
-    line->int32accel = (int32_t)(line->decel_acc + 0.5f);
-    line->int32daccel = line->int32accel;
 }
 
 void turn_info_compute(volatile race_info *pinfo, int32_t mark_cnt)
@@ -568,7 +733,7 @@ static void fast_load_segment(uint16_t mark)
     RMotor.DistanceSum = 0.0f;
 
     target_velocity = line->vel;
-    if ((mark > 0u) && (fast_is_straight(line) != 0u))
+    if ((mark > 0u) && ((line->int32turn_dir & STRAIGHT) != 0u))
     {
         target_velocity = line->in_vel;
         if (target_velocity < (float)MOTOR_SPEED_U32)
@@ -635,9 +800,11 @@ static void fast_start(fast_race_mode_t mode)
     fast_finish_mark_count = 0u;
     fast_mark_error_count = 0u;
 
+    load_turnmark_setting_rom();
     (void)Sensor_HardwareStart();
     maxmin_read_rom();
     read_line_info_rom();
+    load_speed_handle_rom();
 
     if (fast_line_info_valid() == 0u)
     {
@@ -660,6 +827,10 @@ static void fast_start(fast_race_mode_t mode)
 
     fast_make_mark_limits();
     fast_reset_runtime();
+
+    fast_debug_dump_profile();
+
+    HAL_Delay(RACE_START_DELAY_MS);
 
     fast_race_status = FAST_RACE_RUNNING;
     fast_load_segment(0u);
@@ -879,8 +1050,9 @@ static void fast_finish_if_stopped(void)
 
     if ((RMotor.NextVelocity < 20.0f) && (LMotor.NextVelocity < 20.0f))
     {
+        fast_turnmark_led_on();
         CONTROL_TIMER_STOP();
-        Motor_StopPwm();
+        Motor_HoldPosition(END_LED_HOLD_MS);
         fast_turnmark_led_off();
         g_Flag.second_race = OFF;
         g_Flag.fast_flag = OFF;
@@ -926,7 +1098,9 @@ void Fast_RaceTask(void)
         return;
     }
 
+    make_position();
     Handle();
+
     fast_update_third_bigturn_led();
 
     turnmark_distance = (RMotor.TurnMarkCheckDistance +

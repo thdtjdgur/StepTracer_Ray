@@ -1,4 +1,4 @@
-#ifndef SENSOR_H
+﻿#ifndef SENSOR_H
 #define SENSOR_H
 
 #include "main.h"
@@ -38,7 +38,10 @@ void if_lineout(void);
 void CROSS_CHECK_FAST(void);
 int line_out_func(void);
 void turn_decide(volatile turnmark_t *p_mark, volatile turnmark_t *p_remark);
-
+void SensorBoardLed_LeftOn(void);
+void SensorBoardLed_RightOn(void);
+void SensorBoardLed_BothOn(void);
+void SensorBoardLed_Off(void);
 void Sensor_SetRaw(uint8_t index, uint16_t value);
 
 #ifdef __cplusplus

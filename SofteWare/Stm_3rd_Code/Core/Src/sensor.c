@@ -1,9 +1,11 @@
 ﻿#include "sensor.h"
 
 #include "Motor.h"
+#include "OLED.h"
 #include "fastrun.h"
 #include "main.h"
 #include "search.h"
+#include "stm32g4xx_ll_gpio.h"
 
 #include <stddef.h>
 #include <string.h>
@@ -54,6 +56,7 @@ static const uint16_t state_table[] = {
 #define CROSS_TURNMARK_GUARD_DISTANCE_MM 71.0f
 #define LEFT_TURNMARK_LED_PIN           GPIO_PIN_11
 #define RIGHT_TURNMARK_LED_PIN          GPIO_PIN_2
+#define BUZZER_PIN                      GPIO_PIN_11
 
 static const uint16_t emitter_pins[SEN_NUM] = {
     GPIO_PIN_8, GPIO_PIN_9, GPIO_PIN_10, GPIO_PIN_11,
@@ -87,10 +90,10 @@ extern TIM_HandleTypeDef htim6;
 static void position_enable(void);
 static int cross_check(void);
 static void mark_enable_shift(volatile turnmark_t *pleft, volatile turnmark_t *pright);
+static void sensor_buzzer_on(void);
+static void sensor_buzzer_off(void);
 static void sensor_emitters_off(void);
 static void sensor_emitter_on(uint8_t pair_index);
-static void cross_indicator_on(void);
-static void cross_indicator_off(void);
 static HAL_StatusTypeDef sensor_adc_enable(ADC_HandleTypeDef *hadc);
 static void sensor_adc_config_sequence(ADC_HandleTypeDef *hadc,
                                        uint32_t first_channel,
@@ -161,6 +164,7 @@ void sen_vari_init(void)
     g_int32_sen_cnt = 0;
     g_int32_compare_cnt = 0;
     sensor_emitters_off();
+    sensor_buzzer_off();
 }
 
 HAL_StatusTypeDef Sensor_HardwareStart(void)
@@ -382,16 +386,36 @@ static void sensor_emitter_on(uint8_t pair_index)
     GPIOD->BSRR = emitter_pins[pair_index];
 }
 
-static void cross_indicator_on(void)
+void SensorBoardLed_LeftOn(void)
 {
-    GPIOA->BSRR = LEFT_TURNMARK_LED_PIN;
-    GPIOF->BSRR = RIGHT_TURNMARK_LED_PIN;
+    LL_GPIO_SetOutputPin(GPIOA, LEFT_TURNMARK_LED_PIN);
 }
 
-static void cross_indicator_off(void)
+void SensorBoardLed_RightOn(void)
 {
-    GPIOA->BSRR = ((uint32_t)LEFT_TURNMARK_LED_PIN << 16u);
-    GPIOF->BSRR = ((uint32_t)RIGHT_TURNMARK_LED_PIN << 16u);
+    LL_GPIO_SetOutputPin(GPIOF, RIGHT_TURNMARK_LED_PIN);
+}
+
+void SensorBoardLed_BothOn(void)
+{
+    SensorBoardLed_LeftOn();
+    SensorBoardLed_RightOn();
+}
+
+void SensorBoardLed_Off(void)
+{
+    LL_GPIO_ResetOutputPin(GPIOA, LEFT_TURNMARK_LED_PIN);
+    LL_GPIO_ResetOutputPin(GPIOF, RIGHT_TURNMARK_LED_PIN);
+}
+
+static void sensor_buzzer_on(void)
+{
+    LL_GPIO_SetOutputPin(GPIOC, BUZZER_PIN);
+}
+
+static void sensor_buzzer_off(void)
+{
+    LL_GPIO_ResetOutputPin(GPIOC, BUZZER_PIN);
 }
 
 static HAL_StatusTypeDef sensor_adc_enable(ADC_HandleTypeDef *hadc)
@@ -594,7 +618,6 @@ static void sensor_process_sample_pair(uint8_t pair_index, uint16_t left_raw, ui
     if (g_int32_compare_cnt >= (int32_t)ADC_NUM)
     {
         g_int32_compare_cnt = 0;
-        make_position();
         sensor_frame_count++;
     }
 
@@ -773,6 +796,41 @@ int line_out_func(void)
     return 0;
 }
 
+static uint32_t sensor_first_end_accel_for_speed(uint32_t speed)
+{
+    static const uint16_t speed_table[] = {2000u, 2100u, 2200u, 2300u, 2350u, 2400u};
+    static const uint16_t accel_table[] = {7500u, 8000u, 9000u, 8500u, 12000u, 12500u};
+    const uint32_t table_count = (uint32_t)(sizeof(speed_table) / sizeof(speed_table[0]));
+
+    if (speed <= speed_table[0])
+    {
+        return accel_table[0];
+    }
+    if (speed >= speed_table[table_count - 1u])
+    {
+        return accel_table[table_count - 1u];
+    }
+
+    for (uint32_t i = 0u; i < (table_count - 1u); i++)
+    {
+        const uint32_t speed_low = speed_table[i];
+        const uint32_t speed_high = speed_table[i + 1u];
+
+        if (speed <= speed_high)
+        {
+            const int32_t accel_low = (int32_t)accel_table[i];
+            const int32_t accel_delta = (int32_t)accel_table[i + 1u] - accel_low;
+            const int32_t interpolated = accel_low +
+                ((accel_delta * (int32_t)(speed - speed_low)) /
+                 (int32_t)(speed_high - speed_low));
+
+            return (uint32_t)interpolated;
+        }
+    }
+
+    return accel_table[table_count - 1u];
+}
+
 void start_end_check(void)
 {
     if (g_Flag.race_start == OFF)
@@ -791,6 +849,7 @@ void start_end_check(void)
         }
 
         g_Flag.race_start = ON;
+        (void)OLED_DisplayOff();
         g_i32_Time_index = 0;
         U16_turnmark_cnt = 0u;
         U16_3rd_turnmark_cnt = 0u;
@@ -813,43 +872,16 @@ void start_end_check(void)
         return;
     }
 
+    SensorBoardLed_BothOn();
     g_Flag.move_state = OFF;
     g_fp32time = (float)g_i32_Time_index * ((float)SENSOR_TICK_US * 0.000001f);
 
-    if (g_u32_VEL_targetval == 2000u)
-    {
-        g_u32_first_END_ACC_targetval = 8000u;
-    }
-    else if (g_u32_VEL_targetval == 2100u)
-    {
-        g_u32_first_END_ACC_targetval = 8500u;
-    }
-    else if (g_u32_VEL_targetval == 2200u)
-    {
-        g_u32_first_END_ACC_targetval = 9500u;
-    }
-    else if (g_u32_VEL_targetval == 2300u)
-    {
-        g_u32_first_END_ACC_targetval = 10000u;
-    }
-    else if (g_u32_VEL_targetval == 2350u)
-    {
-        g_u32_first_END_ACC_targetval = 12000u;
-    }
-    else if (g_u32_VEL_targetval == 2400u)
-    {
-        g_u32_first_END_ACC_targetval = 12500u;
-    }
-    else
-    {
-        g_u32_first_END_ACC_targetval = 5000u;
-    }
-
+    g_u32_first_END_ACC_targetval = sensor_first_end_accel_for_speed(g_u32_VEL_targetval);
     g_u32_first_END_ACC_targetval += end_accel;
 
     if (g_Flag.first_race == ON)
     {
-        MOVE_TO_END_ACCEL(260.0f, (float)g_u32_first_END_ACC_targetval);
+        MOVE_TO_END_ACCEL(280.0f, (float)g_u32_first_END_ACC_targetval);
     }
     else if (g_Flag.second_race == ON)
     {
@@ -1052,10 +1084,8 @@ static int cross_check(void)
         {
             g_Flag.cross = ON;
             g_Flag.cross_flag = ON;
-            if (g_Flag.race_start == ON)
-            {
-                cross_indicator_on();
-            }
+            sensor_buzzer_off();
+            SensorBoardLed_BothOn();
         }
     }
     else if (g_Flag.cross == ON)
@@ -1090,7 +1120,7 @@ static int cross_check(void)
             g_rmark.turnmark_dist = 0.0f;
             LMotor.CrossCheckDistance = 0.0f;
             RMotor.CrossCheckDistance = 0.0f;
-            cross_indicator_off();
+            SensorBoardLed_Off();
         }
     }
     else
@@ -1099,7 +1129,6 @@ static int cross_check(void)
         g_Flag.cross_flag = OFF;
         LMotor.CrossCheckDistance = 0.0f;
         RMotor.CrossCheckDistance = 0.0f;
-        cross_indicator_off();
     }
 
     return (int)g_Flag.cross;
@@ -1133,6 +1162,7 @@ void turn_decide(volatile turnmark_t *p_mark, volatile turnmark_t *p_remark)
 
     if (g_Flag.cross == ON)
     {
+        sensor_buzzer_off();
         p_mark->turn_flag = OFF;
         p_mark->single_flag = OFF;
         p_mark->cross_flag = OFF;
@@ -1144,6 +1174,9 @@ void turn_decide(volatile turnmark_t *p_mark, volatile turnmark_t *p_remark)
     {
         if (p_mark->turnmark_dist > p_mark->limit_dist)
         {
+            sensor_buzzer_off();
+            SensorBoardLed_Off();
+
             if (p_mark == &g_lmark)
             {
                 if (p_remark->single_flag == ON)
@@ -1215,6 +1248,16 @@ void turn_decide(volatile turnmark_t *p_mark, volatile turnmark_t *p_remark)
         {
             p_mark->single_flag = ON;
             p_mark->limit_dist = p_mark->turnmark_dist + (float)g_u16turn_dist;
+            sensor_buzzer_on();
+
+            if (p_mark == &g_lmark)
+            {
+                SensorBoardLed_LeftOn();
+            }
+            else if (p_mark == &g_rmark)
+            {
+                SensorBoardLed_RightOn();
+            }
         }
     }
     else

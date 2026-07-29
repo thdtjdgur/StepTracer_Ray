@@ -1,4 +1,4 @@
-﻿#ifndef VARIABLE_H
+#ifndef VARIABLE_H
 #define VARIABLE_H
 
 #include <stdbool.h>
@@ -32,6 +32,8 @@ extern "C" {
 #define SW_D (HAL_GPIO_ReadPin(GPIOF, GPIO_PIN_9))
 
 #define SW_DELAY_MS 250u
+#define RACE_START_DELAY_MS 1000u
+#define END_LED_HOLD_MS 700u
 
 #define STRAIGHT        0x0001u
 #define LEFT_TURN       0x0002u
@@ -48,9 +50,9 @@ extern "C" {
 #define THIRD_FIXED_KP          0.85f
 #define THIRD_SHIFT_ZERO_STEP   8.0f
 #define THIRD_SOFT_SAFE_DIST    1000
-#define THIRD_SOFT_SAFE_STEP    7.0f
+#define THIRD_SOFT_SAFE_STEP    10.0f
 #define END_STOP_MARGIN_MM      300
-#define X_90_CONTINUOUS_MIN     2u
+#define X_90_CONTINUOUS_MIN     5u
 #define X_45_CONTINUOUS_MIN     3u
 
 typedef enum

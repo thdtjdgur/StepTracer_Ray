@@ -30,7 +30,7 @@ typedef enum
 typedef enum
 {
     TURN_45_DIST = 280,
-    TURN_90_DIST = 470,
+    TURN_90_DIST = 400,
     TURN_180_DIST = 880,
     TURN_270_DIST = 1150
 } turn_dist_enum_t;
@@ -82,12 +82,12 @@ void turn_info_compute(volatile race_info *pinfo, int32_t mark_cnt);
 void max_vel_compute(float distance,
                      float minus_distance,
                      float current_velocity,
-                     float jerk,
+                     int32_t accel,
                      float *max_velocity);
 void decel_dist_compute(float current_velocity,
                         float target_velocity,
-                        float *decel_distance,
-                        float *decel_acceleration);
+                        int32_t accel,
+                        float *decel_distance);
 void Fast_ProfilePlanStraight(volatile race_info *line, uint16_t mark);
 void Fast_ProfileSetCurve(volatile race_info *line, float velocity);
 

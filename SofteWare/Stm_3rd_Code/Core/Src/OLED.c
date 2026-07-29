@@ -175,6 +175,22 @@ uint8_t OLED_IsReady(void)
     return oled_ready;
 }
 
+HAL_StatusTypeDef OLED_DisplayOff(void)
+{
+    if (oled_ready == 0u)
+    {
+        return HAL_OK;
+    }
+
+    HAL_StatusTypeDef status = oled_write_command(0xae);
+    if (status == HAL_OK)
+    {
+        oled_ready = 0u;
+    }
+
+    return status;
+}
+
 void OLED_Clear(void)
 {
     memset(oled_buffer, 0, sizeof(oled_buffer));

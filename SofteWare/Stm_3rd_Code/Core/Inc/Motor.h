@@ -112,6 +112,7 @@ void CONTROL_ISR(void);
 
 void Motor_StartPwm(void);
 void Motor_StopPwm(void);
+void Motor_HoldPosition(uint32_t hold_ms);
 void Motor_EnableOutputs(void);
 void Motor_DisableOutputs(void);
 void Motor_SetDirectionForward(void);

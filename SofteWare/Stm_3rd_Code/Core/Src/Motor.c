@@ -1,6 +1,8 @@
 #include "Motor.h"
 
 #include "extremerun.h"
+#include "stm32g4xx_ll_cortex.h"
+#include "stm32g4xx_ll_tim.h"
 
 #include <math.h>
 #include <string.h>
@@ -26,6 +28,11 @@ extern TIM_HandleTypeDef htim20;
 #define RIGHT_MOTOR_FORWARD_STATE   GPIO_PIN_SET
 
 #define MOTOR_TIMER_CLOCK_FALLBACK  170000000u
+#define MOTOR_START_VELO_MM_S     100.0f
+#define STM_THIRD_CONTROL_PERIOD_US 150.0f
+#define TMS_THIRD_CONTROL_PERIOD_US 200.0f
+#define THIRD_KP_PERIOD_SCALE \
+    (STM_THIRD_CONTROL_PERIOD_US / TMS_THIRD_CONTROL_PERIOD_US)
 
 volatile MOTORCTRL LMotor;
 volatile MOTORCTRL RMotor;
@@ -36,24 +43,24 @@ volatile uint32_t JERK_MIDDLE_U32 = 25000u;
 volatile uint32_t JERK_SHORT_U32 = 30000u;
 
 volatile uint32_t MOTOR_SPEED_U32 = 2000u;
-volatile uint32_t SECOND_MAX_SPEED_U32 = 3600u;
+volatile uint32_t SECOND_MAX_SPEED_U32 = 4000u;
 volatile uint32_t END_SPEED_U32 = 2000u;
 
-volatile int32_t ACCEL_COEF_I32 = 310;
-volatile int32_t DECEL_COEF_I32 = 266;
+volatile int32_t ACCEL_COEF_I32 = 296;
+volatile int32_t DECEL_COEF_I32 = 256;
 volatile int32_t D_RATIO_I32 = 2;
 volatile int32_t U_RATIO_I32 = 2;
 volatile uint32_t Down_Kp_U32 = 5u;
 volatile uint32_t SHARP_KP_U32 = 40u;
 volatile uint32_t S44S_KP_U32 = 72u;
-volatile uint32_t S44S_short_KP_U32 = 13u;
-volatile uint32_t S44S_long_KP_U32 = 10u;
+volatile uint32_t S44S_short_KP_U32 = 6u;
+volatile uint32_t S44S_long_KP_U32 = 6u;
 volatile uint32_t S4444S_KP_U32 = 37u;
 volatile uint32_t S4_KP_U32 = 29u;
 volatile uint32_t S9999S_KP_U32 = 10u;
 volatile uint32_t mid_long_straight = 25u;
 volatile uint32_t short_straight = 25u;
-volatile uint32_t s44s_end_s = 20u;
+volatile uint32_t s44s_end_s = 50u;
 
 static uint32_t motor_timer_clock_hz = MOTOR_TIMER_CLOCK_FALLBACK;
 
@@ -239,20 +246,35 @@ static uint8_t motor_pwm_is_running(void)
                : 0u;
 }
 
-static void motor_prepare_first_period(void)
+static float motor_start_velocity_for_target(float target_velocity)
 {
-    LMotor.NextVelocity = MIN_VELO;
-    RMotor.NextVelocity = MIN_VELO;
-    LMotor.NextAccel = 0.0f;
-    RMotor.NextAccel = 0.0f;
+    if (target_velocity <= MIN_VELO)
+    {
+        return 0.0f;
+    }
+
+    return (target_velocity < MOTOR_START_VELO_MM_S)
+               ? target_velocity
+               : MOTOR_START_VELO_MM_S;
+}
+
+static void motor_prepare_first_period(float start_velocity, float start_accel)
+{
+    const float next_velocity = motor_clamp_float(start_velocity, 0.0f, MAX_VELO);
+    const float period_velocity = (next_velocity < MIN_VELO) ? MIN_VELO : next_velocity;
+
+    LMotor.NextVelocity = next_velocity;
+    RMotor.NextVelocity = next_velocity;
+    LMotor.NextAccel = motor_clamp_float(start_accel, 0.0f, MAX_ACC);
+    RMotor.NextAccel = motor_clamp_float(start_accel, 0.0f, MAX_ACC);
 
     motor_apply_period_counts(&LMotor,
                               &htim8,
-                              motor_raw_counts_from_velocity(MIN_VELO) *
+                              motor_raw_counts_from_velocity(period_velocity) *
                                   motor_valid_handle(LMotor.TargetHandle));
     motor_apply_period_counts(&RMotor,
                               &htim20,
-                              motor_raw_counts_from_velocity(MIN_VELO) *
+                              motor_raw_counts_from_velocity(period_velocity) *
                                   motor_valid_handle(RMotor.TargetHandle));
 }
 
@@ -346,7 +368,7 @@ void Init_MOTOR(void)
     JERK_SHORT_U32 = 30000u;
     MOTOR_SPEED_U32 = 2000u;
     END_SPEED_U32 = 2000u;
-    SECOND_MAX_SPEED_U32 = 3600u;
+    SECOND_MAX_SPEED_U32 = 4000u;
 
     Motor_SetDirectionForward();
     Motor_StopPwm();
@@ -491,7 +513,7 @@ void MOVE_TO_MOVE(float distance,
 
     if (was_running == 0u)
     {
-        motor_prepare_first_period();
+        motor_prepare_first_period(motor_start_velocity_for_target(target_velocity), MIN_ACC);
     }
     motor_profile_unlock(primask);
 
@@ -512,8 +534,8 @@ static void motor_move_to_end(float distance, float decel_acc)
     LMotor.TargetVel = 0.0f;
     RMotor.DecelVelocity = 0.0f;
     LMotor.DecelVelocity = 0.0f;
-    RMotor.DecelDistance = HEIGHT_SEEN - 65.0f;
-    LMotor.DecelDistance = HEIGHT_SEEN - 65.0f;
+    RMotor.DecelDistance = distance;
+    LMotor.DecelDistance = distance;
     RMotor.UserDistance = distance;
     LMotor.UserDistance = distance;
 
@@ -531,7 +553,7 @@ static void motor_move_to_end(float distance, float decel_acc)
 
     if (was_running == 0u)
     {
-        motor_prepare_first_period();
+        motor_prepare_first_period(0.0f, 0.0f);
     }
     motor_profile_unlock(primask);
 
@@ -544,7 +566,8 @@ static void motor_move_to_end(float distance, float decel_acc)
 void MOVE_TO_END(float distance)
 {
     const float avg_velocity = (RMotor.NextVelocity + LMotor.NextVelocity) * 0.5f;
-    const float stop_distance = HEIGHT_SEEN - 65.0f;
+    const float stop_distance =
+        (distance > 0.0f) ? distance : (HEIGHT_SEEN - 65.0f);
     float decel_acc = MIN_ACC;
 
     if (stop_distance > 0.0f)
@@ -582,48 +605,71 @@ void Motor_StartPwm(void)
     if (motor_pwm_is_running() != 0u)
     {
         Motor_EnableOutputs();
-        htim8.Instance->DIER |= TIM_DIER_UIE;
-        htim20.Instance->DIER |= TIM_DIER_UIE;
+        LL_TIM_EnableIT_UPDATE(TIM8);
+        LL_TIM_EnableIT_UPDATE(TIM20);
         return;
     }
 
     Motor_EnableOutputs();
 
-    htim8.Instance->CNT = 0u;
-    htim20.Instance->CNT = 0u;
-    htim8.Instance->SR &= ~TIM_SR_UIF;
-    htim20.Instance->SR &= ~TIM_SR_UIF;
-
-    htim8.Instance->CCER |= TIM_CCER_CC1E;
-    htim20.Instance->CCER |= TIM_CCER_CC1E;
-    htim8.Instance->BDTR |= TIM_BDTR_MOE;
-    htim20.Instance->BDTR |= TIM_BDTR_MOE;
-    htim8.Instance->DIER |= TIM_DIER_UIE;
-    htim20.Instance->DIER |= TIM_DIER_UIE;
-    htim8.Instance->CR1 |= TIM_CR1_CEN;
-    htim20.Instance->CR1 |= TIM_CR1_CEN;
-
     g_Flag.motor = ON;
+
+    LL_TIM_SetCounter(TIM8, 0u);
+    LL_TIM_SetCounter(TIM20, 0u);
+    LL_TIM_ClearFlag_UPDATE(TIM8);
+    LL_TIM_ClearFlag_UPDATE(TIM20);
+
+    LL_TIM_CC_EnableChannel(TIM8, LL_TIM_CHANNEL_CH1);
+    LL_TIM_CC_EnableChannel(TIM20, LL_TIM_CHANNEL_CH1);
+    LL_TIM_EnableAllOutputs(TIM8);
+    LL_TIM_EnableAllOutputs(TIM20);
+    LL_TIM_EnableIT_UPDATE(TIM8);
+    LL_TIM_EnableIT_UPDATE(TIM20);
+    LL_TIM_EnableCounter(TIM8);
+    LL_TIM_EnableCounter(TIM20);
+}
+
+static void motor_stop_pulse_generation(void)
+{
+    LL_TIM_DisableIT_UPDATE(TIM8);
+    LL_TIM_DisableIT_UPDATE(TIM20);
+    LL_TIM_DisableCounter(TIM8);
+    LL_TIM_DisableCounter(TIM20);
+    LL_TIM_CC_DisableChannel(TIM8, LL_TIM_CHANNEL_CH1);
+    LL_TIM_CC_DisableChannel(TIM20, LL_TIM_CHANNEL_CH1);
+    LL_TIM_DisableAllOutputs(TIM8);
+    LL_TIM_DisableAllOutputs(TIM20);
+    LL_TIM_OC_SetCompareCH1(TIM8, 0u);
+    LL_TIM_OC_SetCompareCH1(TIM20, 0u);
+    LL_TIM_ClearFlag_UPDATE(TIM8);
+    LL_TIM_ClearFlag_UPDATE(TIM20);
+}
+
+static void motor_delay_ms(uint32_t delay_ms)
+{
+    while (delay_ms > 0u)
+    {
+        while (LL_SYSTICK_IsActiveCounterFlag() == 0u)
+        {
+        }
+        delay_ms--;
+    }
 }
 
 void Motor_StopPwm(void)
 {
-    htim8.Instance->DIER &= ~TIM_DIER_UIE;
-    htim20.Instance->DIER &= ~TIM_DIER_UIE;
-    htim8.Instance->CR1 &= ~TIM_CR1_CEN;
-    htim20.Instance->CR1 &= ~TIM_CR1_CEN;
-    htim8.Instance->CCER &= ~TIM_CCER_CC1E;
-    htim20.Instance->CCER &= ~TIM_CCER_CC1E;
-    htim8.Instance->BDTR &= ~TIM_BDTR_MOE;
-    htim20.Instance->BDTR &= ~TIM_BDTR_MOE;
-
-    htim8.Instance->CCR1 = 0u;
-    htim20.Instance->CCR1 = 0u;
-    htim8.Instance->SR &= ~TIM_SR_UIF;
-    htim20.Instance->SR &= ~TIM_SR_UIF;
-
+    motor_stop_pulse_generation();
     Motor_DisableOutputs();
     g_Flag.motor = OFF;
+}
+
+void Motor_HoldPosition(uint32_t hold_ms)
+{
+    motor_stop_pulse_generation();
+    g_Flag.motor = OFF;
+    Motor_EnableOutputs();
+    motor_delay_ms(hold_ms);
+    Motor_DisableOutputs();
 }
 
 void Motor_EnableOutputs(void)
@@ -722,8 +768,6 @@ static uint8_t control_soft_safe_enable(uint16_t mark, uint16_t total)
     }
 
     if ((control_soft_safe_active == OFF) &&
-        ((line->int32turn_dir & STRAIGHT) != 0) &&
-        (line->int32dist < THIRD_SOFT_SAFE_DIST) &&
         ((search_info[mark - 1u].ShiftZeroPrepare_U16 != OFF) ||
          (search_info[mark - 1u].ShiftZeroHold_U16 != OFF)))
     {
@@ -734,7 +778,19 @@ static uint8_t control_soft_safe_enable(uint16_t mark, uint16_t total)
     if (control_soft_safe_active != OFF)
     {
         if ((mark < control_soft_safe_start_segment) ||
-            (mark > (uint16_t)(control_soft_safe_start_segment + 1u)))
+            (mark > control_soft_safe_start_segment))
+        {
+            control_soft_safe_reset();
+            return 0u;
+        }
+
+        if ((g_Flag.after != OFF) &&
+            (line->chop_shift_before != 0.0f) &&
+            (line->chop_shift_after != 0.0f) &&
+            (((line->chop_shift_before > 0.0f) &&
+              (line->chop_shift_after < 0.0f)) ||
+             ((line->chop_shift_before < 0.0f) &&
+              (line->chop_shift_after > 0.0f))))
         {
             control_soft_safe_reset();
             return 0u;
@@ -743,7 +799,6 @@ static uint8_t control_soft_safe_enable(uint16_t mark, uint16_t total)
 
     return (control_soft_safe_active != OFF) ? 1u : 0u;
 }
-
 static void control_soft_safe_limit(float shift_before_update)
 {
     const float requested_delta = control_position_shift - shift_before_update;
@@ -909,25 +964,11 @@ static void control_apply_shift_step(uint16_t mark, uint16_t total)
     }
 
     step = line->chop_shift_after;
-    if ((mark < total) &&
+    if (((mark + 2u) <= total) &&
         ((search_info[mark + 1u].int32turn_dir &
           (STRAIGHT | END_TURN)) != 0))
     {
-        if ((mark > 0u) && ((mark + 2u) <= total) &&
-            (line->int32turn_way != search_info[mark + 2u].int32turn_way) &&
-            ((search_info[mark + 2u].int32turn_dir &
-              (END_TURN | STRAIGHT)) == 0) &&
-            ((search_info[mark + 1u].int32turn_dir & END_TURN) == 0) &&
-            ((search_info[mark - 1u].int32turn_dir & STRAIGHT) != 0))
-        {
-            control_add_with_limits(step,
-                                    -(current_target * 0.5f),
-                                    current_target * 0.5f);
-        }
-        else
-        {
-            control_add_with_limits(step, current_target, -current_target);
-        }
+        control_add_with_limits(step, current_target, -current_target);
     }
     else
     {
@@ -993,14 +1034,14 @@ void CONTROL_ISR(void)
     {
         xCONTROL(ON,
                  &HanPID,
-                 ((float)D_RATIO_I32) * 0.0001f,
+                 ((float)D_RATIO_I32) * 0.0001f * THIRD_KP_PERIOD_SCALE,
                  line->Kp_UpDown);
     }
     else
     {
         xCONTROL(OFF,
                  &HanPID,
-                 ((float)U_RATIO_I32) * 0.0001f,
+                 ((float)U_RATIO_I32) * 0.0001f * THIRD_KP_PERIOD_SCALE,
                  line->Kp_UpDown);
     }
 
@@ -1021,14 +1062,27 @@ void CONTROL_ISR(void)
     {
         if ((zero_prepare != 0u) || (zero_hold != 0u))
         {
-            control_shift_to_zero();
+            if ((g_Flag.after != OFF) &&
+                (U16_3rd_turnmark_cnt < total) &&
+                (search_info[U16_3rd_turnmark_cnt + 1u].ShiftZeroPrepare_U16 == OFF) &&
+                (search_info[U16_3rd_turnmark_cnt + 1u].ShiftZeroHold_U16 == OFF) &&
+                (line->chop_shift_after != 0.0f))
+            {
+                control_position_shift += line->chop_shift_after;
+                control_soft_safe_limit(shift_before_update);
+            }
+            else
+            {
+                control_shift_to_zero();
+            }
         }
         else
         {
             control_apply_shift_step(U16_3rd_turnmark_cnt, total);
         }
 
-        if (control_soft_safe_enable(U16_3rd_turnmark_cnt, total) != 0u)
+        if (((zero_prepare == 0u) && (zero_hold == 0u)) &&
+            (control_soft_safe_enable(U16_3rd_turnmark_cnt, total) != 0u))
         {
             control_soft_safe_limit(shift_before_update);
         }

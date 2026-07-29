@@ -13,7 +13,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#define MENU_OLED_REFRESH_MS 250u
+#define MENU_OLED_REFRESH_MS 75u
 #define MENU_SAVE_POPUP_MS 500u
 #define MENU_SENSOR_PAGE_COUNT 4u
 #define MENU_MAXMIN_PAGE_COUNT 8u
@@ -28,9 +28,12 @@
 #define MENU_JERK_MAX_U32 UINT16_MAX
 
 #define MENU_HANDLE_STEP_I32 1
+#define MENU_END_ACCEL_STEP_I32 100
+#define MENU_HANDLE_ACCEL_REPEAT_MS 150u
 #define MENU_HANDLE_MIN_I32 (-32768)
 #define MENU_HANDLE_MAX_I32 32767
 #define MENU_HANDLE_KP_MAX_U32 65535u
+#define MENU_TURNMARK_REPEAT_MS 100u
 
 #define MENU_ROW_COUNT 6u
 #define MENU_COL_COUNT 6u
@@ -90,6 +93,7 @@ typedef enum
 {
     MENU_HANDLE_ACCEL = 0,
     MENU_HANDLE_DECEL,
+    MENU_HANDLE_FAST_END_DECEL,
     MENU_HANDLE_D_RATIO,
     MENU_HANDLE_U_RATIO,
     MENU_HANDLE_DOWN_KP,
@@ -105,6 +109,8 @@ typedef enum
     MENU_SAVE_SPEED,
     MENU_SAVE_JERK,
     MENU_SAVE_HANDLE,
+    MENU_SAVE_TURNMARK,
+    MENU_SAVE_XLIMIT,
     MENU_SAVE_ERROR
 } menu_save_status_t;
 
@@ -113,16 +119,16 @@ static const uint8_t menu_last_col[MENU_ROW_COUNT] = {
     3u,
     3u,
     2u,
-    4u,
+    5u,
     2u,
 };
 
 static const char *const menu_label[MENU_ROW_COUNT][MENU_COL_COUNT] = {
     {"_SENSOR_", "VFD_4095", "_MAXMIN_", "_VFD_127", "POSITION", ""},
     {"_MOTOR__", "_VFD_1__", "_VFD_2__", "_VFD_3__", "", ""},
-    {"_VFD_RUN", "_V_VELO_", "HanAccel", "HanDecel", "", ""},
+    {"Oled_Run", "_V_VELO_", "HanAccel", "HanDecel", "", ""},
     {"TURNMARK", "turndist", "t__limit", "", "", ""},
-    {"VFDACCEL", "JRK", "J_L", "J_M", "J_S", ""},
+    {"OledAccel", "JRK", "J_L", "J_M", "J_S", "EndDecel"},
     {"X_LIMIT", "x45_lim", "x90_lim", "", "", ""},
 };
 
@@ -171,7 +177,7 @@ static void Menu_RenderMotorFast(fast_race_mode_t mode);
 static void Menu_RenderRaceStarting(const char *race_name);
 static void Menu_RenderSpeed(void);
 static void Menu_RenderJerk(void);
-static void Menu_RenderRunHandle(uint8_t is_decel);
+static void Menu_RenderRunHandle(menu_handle_item_t item);
 static void Menu_RenderTurnmark(void);
 static void Menu_RenderXLimit(void);
 static void Menu_ToggleXLimit(uint8_t col);
@@ -223,6 +229,7 @@ void Menu_Init(void)
     read_vel_rom();
     load_accel_rom();
     load_handle_rom();
+    load_turnmark_setting_rom();
     Menu_SetSpeed((uint32_t)g_u32_VEL_targetval);
     Menu_ClampJerkParams();
     Menu_ClampHandleParams();
@@ -394,7 +401,7 @@ void VFD_3(void)
     Menu_SetLocation(MENU_ROW_MOTOR, 3u);
 }
 
-void VFD_RUN(void)
+void Oled_Run(void)
 {
     Menu_SetLocation(MENU_ROW_RUN, 0u);
 }
@@ -429,7 +436,7 @@ void t__limit(void)
     Menu_SetLocation(MENU_ROW_TURNMARK, 2u);
 }
 
-void VFD_ACCEL(void)
+void OledAccel(void)
 {
     Menu_SetLocation(MENU_ROW_ACCEL, 0u);
 }
@@ -512,19 +519,32 @@ static uint8_t Menu_ConsumeButton(menu_button_t button)
 {
     const uint8_t pressed = Menu_ButtonPressed(button);
     const uint32_t now = HAL_GetTick();
+    uint32_t repeat_delay = SW_DELAY_MS;
+
+    if (edit_mode == MENU_EDIT_TURNMARK)
+    {
+        repeat_delay = MENU_TURNMARK_REPEAT_MS;
+    }
+    else if ((edit_mode == MENU_EDIT_HANDLE) &&
+               ((handle_item == MENU_HANDLE_ACCEL) ||
+                (handle_item == MENU_HANDLE_DECEL) ||
+                (handle_item == MENU_HANDLE_FAST_END_DECEL)))
+    {
+        repeat_delay = MENU_HANDLE_ACCEL_REPEAT_MS;
+    }
 
     if (pressed != 0u)
     {
         if (button_latched[button] == 0u)
         {
             button_latched[button] = 1u;
-            button_next_repeat_tick[button] = now + SW_DELAY_MS;
+            button_next_repeat_tick[button] = now + repeat_delay;
             return 1u;
         }
 
         if ((int32_t)(now - button_next_repeat_tick[button]) >= 0)
         {
-            button_next_repeat_tick[button] = now + SW_DELAY_MS;
+            button_next_repeat_tick[button] = now + repeat_delay;
             return 1u;
         }
 
@@ -734,6 +754,12 @@ static void Menu_ExecuteCurrent(void)
             edit_mode = MENU_EDIT_JERK;
             save_status = MENU_SAVE_NONE;
         }
+        else if (menu_col == 5u)
+        {
+            handle_item = MENU_HANDLE_FAST_END_DECEL;
+            edit_mode = MENU_EDIT_HANDLE;
+            save_status = MENU_SAVE_NONE;
+        }
         break;
 
     case MENU_ROW_TURNMARK:
@@ -839,9 +865,17 @@ static void Menu_HandleEditButtons(void)
 {
     if (edit_mode == MENU_EDIT_TURNMARK)
     {
-        if ((Menu_ConsumeButton(BUTTON_UP) != 0u) ||
-            (Menu_ConsumeButton(BUTTON_DOWN) != 0u))
+        if (Menu_ConsumeButton(BUTTON_UP) != 0u)
         {
+            Menu_SaveEditValue();
+            edit_mode = MENU_EDIT_NONE;
+            Menu_RequestRender();
+            return;
+        }
+
+        if (Menu_ConsumeButton(BUTTON_DOWN) != 0u)
+        {
+            edit_mode = MENU_EDIT_NONE;
             Menu_SetLocation(MENU_ROW_TURNMARK, 0u);
             return;
         }
@@ -849,6 +883,7 @@ static void Menu_HandleEditButtons(void)
         if (Menu_ConsumeButton(BUTTON_RIGHT) != 0u)
         {
             Menu_AdjustTurnmark(1);
+            save_status = MENU_SAVE_NONE;
             Menu_RequestRender();
             return;
         }
@@ -856,6 +891,7 @@ static void Menu_HandleEditButtons(void)
         if (Menu_ConsumeButton(BUTTON_LEFT) != 0u)
         {
             Menu_AdjustTurnmark(-1);
+            save_status = MENU_SAVE_NONE;
             Menu_RequestRender();
         }
         return;
@@ -878,8 +914,27 @@ static void Menu_HandleEditButtons(void)
         }
         else if (edit_mode == MENU_EDIT_HANDLE)
         {
+            if (menu_row == MENU_ROW_ACCEL)
+            {
+                edit_mode = MENU_EDIT_NONE;
+                Menu_SetLocation(MENU_ROW_ACCEL, 0u);
+                Menu_RequestRender();
+                return;
+            }
+
             Menu_NextHandleItem();
-            menu_col = (handle_item == MENU_HANDLE_DECEL) ? 3u : 2u;
+            if (handle_item == MENU_HANDLE_DECEL)
+            {
+                menu_col = 3u;
+            }
+            else if (handle_item == MENU_HANDLE_FAST_END_DECEL)
+            {
+                menu_col = 5u;
+            }
+            else
+            {
+                menu_col = 2u;
+            }
             save_status = MENU_SAVE_NONE;
         }
         Menu_RequestRender();
@@ -972,15 +1027,19 @@ static void Menu_RenderCurrent(void)
     }
     else if ((menu_row == MENU_ROW_RUN) && (menu_col == 2u))
     {
-        Menu_RenderRunHandle(0u);
+        Menu_RenderRunHandle(MENU_HANDLE_ACCEL);
     }
     else if ((menu_row == MENU_ROW_RUN) && (menu_col == 3u))
     {
-        Menu_RenderRunHandle(1u);
+        Menu_RenderRunHandle(MENU_HANDLE_DECEL);
     }
     else if ((menu_row == MENU_ROW_TURNMARK) && (menu_col > 0u))
     {
         Menu_RenderTurnmark();
+    }
+    else if ((menu_row == MENU_ROW_ACCEL) && (menu_col == 5u))
+    {
+        Menu_RenderRunHandle(MENU_HANDLE_FAST_END_DECEL);
     }
     else if ((menu_row == MENU_ROW_ACCEL) && (menu_col > 0u))
     {
@@ -1094,6 +1153,9 @@ static void Menu_Render127(void)
 
 static void Menu_RenderPosition(void)
 {
+    sensor_check_127();
+    make_position();
+
     const long position = (long)((g_pos.temp_position >= 0.0f)
                                     ? (g_pos.temp_position + 0.5f)
                                     : (g_pos.temp_position - 0.5f));
@@ -1264,14 +1326,21 @@ static void Menu_RenderSpeed(void)
     OLED_Printf(2u, "1ST:%lu", (unsigned long)g_u32_VEL_targetval);
     if (save_status != MENU_SAVE_NONE)
     {
-        OLED_Printf(3u, "%s", Menu_SaveText(MENU_SAVE_SPEED));
+        OLED_Printf(3u, "%s A:%ld D:%ld",
+                    Menu_SaveText(MENU_SAVE_SPEED),
+                    (long)ACCEL_COEF_I32,
+                    (long)DECEL_COEF_I32);
+    }
+    else
+    {
+        OLED_Printf(3u, "A:%ld D:%ld", (long)ACCEL_COEF_I32, (long)DECEL_COEF_I32);
     }
 }
 
 static void Menu_RenderJerk(void)
 {
     OLED_Clear();
-    OLED_PrintTitle("VFDACCEL");
+    OLED_PrintTitle("OledAccel");
     OLED_Printf(2u, "%s:%lu", Menu_JerkLabel(), (unsigned long)Menu_JerkValue());
     if (save_status != MENU_SAVE_NONE)
     {
@@ -1279,26 +1348,39 @@ static void Menu_RenderJerk(void)
     }
 }
 
-static void Menu_RenderRunHandle(uint8_t is_decel)
+static void Menu_RenderRunHandle(menu_handle_item_t default_item)
 {
     const menu_handle_item_t item = (edit_mode == MENU_EDIT_HANDLE)
                                         ? handle_item
-                                        : ((is_decel != 0u) ? MENU_HANDLE_DECEL : MENU_HANDLE_ACCEL);
-    const char *title = (is_decel != 0u) ? "HanDecel" : "HanAccel";
+                                        : default_item;
+    const char *title = (default_item == MENU_HANDLE_DECEL)
+                            ? "HanDecel"
+                            : ((default_item == MENU_HANDLE_FAST_END_DECEL)
+                                   ? "EndDecel"
+                                   : "HanAccel");
     const char *status = Menu_SaveText(MENU_SAVE_HANDLE);
 
     OLED_Clear();
-    OLED_PrintTitle("%s", (edit_mode == MENU_EDIT_HANDLE) ? "HAN" : title);
+    OLED_PrintTitle("%s",
+                    ((edit_mode == MENU_EDIT_HANDLE) &&
+                     (item != MENU_HANDLE_FAST_END_DECEL))
+                        ? "HAN"
+                        : title);
     OLED_Printf(2u, "%s:%ld", Menu_HandleLabel(item), (long)Menu_HandleValue(item));
     if (save_status != MENU_SAVE_NONE)
     {
-        OLED_Printf(3u, "%s", status);
+        OLED_Printf(3u, "%s V:%lu", status, (unsigned long)g_u32_VEL_targetval);
+    }
+    else
+    {
+        OLED_Printf(3u, "V:%lu", (unsigned long)g_u32_VEL_targetval);
     }
 }
 
 static void Menu_RenderTurnmark(void)
 {
     const uint8_t editing = (edit_mode == MENU_EDIT_TURNMARK) ? 1u : 0u;
+    const char *status = Menu_SaveText(MENU_SAVE_TURNMARK);
 
     if (editing == 0u)
     {
@@ -1310,16 +1392,29 @@ static void Menu_RenderTurnmark(void)
     if (turnmark_item == MENU_TURNMARK_DISTANCE)
     {
         OLED_Printf(2u, "Tdist:%u", T___dist);
-        OLED_Printf(3u, "turn:%u", g_u16turn_dist);
+        if (status[0] != '\0')
+        {
+            OLED_Printf(3u, "%s", status);
+        }
+        else
+        {
+            OLED_Printf(3u, "turn:%u", g_u16turn_dist);
+        }
     }
     else
     {
         OLED_Printf(2u, "Tcnt:%u", Turn_Cnt);
+        if (status[0] != '\0')
+        {
+            OLED_Printf(3u, "%s", status);
+        }
     }
 }
 
 static void Menu_RenderXLimit(void)
 {
+    const char *status = Menu_SaveText(MENU_SAVE_XLIMIT);
+
     OLED_Clear();
     if (menu_col == 1u)
     {
@@ -1330,6 +1425,11 @@ static void Menu_RenderXLimit(void)
     {
         OLED_PrintTitle("x90_lim");
         OLED_Printf(2u, "90off:%u", X90_CONT_LIMIT_OFF_U16);
+    }
+
+    if (status[0] != '\0')
+    {
+        OLED_Printf(3u, "%s", status);
     }
 }
 
@@ -1343,6 +1443,9 @@ static void Menu_ToggleXLimit(uint8_t col)
     {
         X90_CONT_LIMIT_OFF_U16 = (X90_CONT_LIMIT_OFF_U16 == OFF) ? ON : OFF;
     }
+
+    save_turnmark_setting_rom();
+    save_status = (Rom_LastOperationOk() != 0u) ? MENU_SAVE_XLIMIT : MENU_SAVE_ERROR;
 }
 
 static void Menu_NextPage(void)
@@ -1409,6 +1512,7 @@ static void Menu_SetSpeed(uint32_t value)
     value = Menu_ClampU32(value, MENU_SPEED_MIN_U32, MENU_SPEED_MAX_U32);
     g_u32_VEL_targetval = value;
     MOTOR_SPEED_U32 = value;
+    load_speed_handle_rom();
 }
 
 static void Menu_AdjustSpeed(int8_t direction)
@@ -1512,6 +1616,8 @@ static int32_t Menu_HandleValue(menu_handle_item_t item)
     {
     case MENU_HANDLE_DECEL:
         return DECEL_COEF_I32;
+    case MENU_HANDLE_FAST_END_DECEL:
+        return (int32_t)g_u32_second_END_ACC_targetval;
     case MENU_HANDLE_D_RATIO:
         return D_RATIO_I32;
     case MENU_HANDLE_U_RATIO:
@@ -1534,6 +1640,11 @@ static void Menu_SetHandleValue(menu_handle_item_t item, int32_t value)
     {
     case MENU_HANDLE_DECEL:
         DECEL_COEF_I32 = Menu_ClampI32(value, MENU_HANDLE_MIN_I32, MENU_HANDLE_MAX_I32);
+        break;
+    case MENU_HANDLE_FAST_END_DECEL:
+        g_u32_second_END_ACC_targetval = (uint32_t)Menu_ClampI32(value,
+                                                                 (int32_t)MIN_ACC,
+                                                                 (int32_t)MOTOR_LIMIT_STOP_ACC);
         break;
     case MENU_HANDLE_D_RATIO:
         D_RATIO_I32 = Menu_ClampI32(value, MENU_HANDLE_MIN_I32, MENU_HANDLE_MAX_I32);
@@ -1560,6 +1671,9 @@ static void Menu_SetHandleValue(menu_handle_item_t item, int32_t value)
 static void Menu_AdjustHandle(int8_t direction)
 {
     int32_t value = Menu_HandleValue(handle_item);
+    const int32_t step = (handle_item == MENU_HANDLE_FAST_END_DECEL)
+                             ? MENU_END_ACCEL_STEP_I32
+                             : MENU_HANDLE_STEP_I32;
     const uint8_t is_kp = ((handle_item == MENU_HANDLE_DOWN_KP) ||
                            (handle_item == MENU_HANDLE_SHARP_KP) ||
                            (handle_item == MENU_HANDLE_S44S_KP))
@@ -1572,14 +1686,14 @@ static void Menu_AdjustHandle(int8_t direction)
     {
         if (value < max_value)
         {
-            value += MENU_HANDLE_STEP_I32;
+            value += step;
         }
     }
     else
     {
         if (value > min_value)
         {
-            value -= MENU_HANDLE_STEP_I32;
+            value -= step;
         }
     }
 
@@ -1641,9 +1755,19 @@ static void Menu_SaveEditValue(void)
     }
     else if (edit_mode == MENU_EDIT_HANDLE)
     {
+        uint8_t save_ok;
+
         Menu_ClampHandleParams();
         save_handle_rom();
-        save_status = (Rom_LastOperationOk() != 0u) ? MENU_SAVE_HANDLE : MENU_SAVE_ERROR;
+        save_ok = Rom_LastOperationOk();
+        save_speed_handle_rom();
+        save_ok = (uint8_t)(save_ok & Rom_LastOperationOk());
+        save_status = (save_ok != 0u) ? MENU_SAVE_HANDLE : MENU_SAVE_ERROR;
+    }
+    else if (edit_mode == MENU_EDIT_TURNMARK)
+    {
+        save_turnmark_setting_rom();
+        save_status = (Rom_LastOperationOk() != 0u) ? MENU_SAVE_TURNMARK : MENU_SAVE_ERROR;
     }
 }
 
@@ -1679,6 +1803,8 @@ static const char *Menu_HandleLabel(menu_handle_item_t item)
     {
     case MENU_HANDLE_DECEL:
         return "DEC";
+    case MENU_HANDLE_FAST_END_DECEL:
+        return "END";
     case MENU_HANDLE_D_RATIO:
         return "DRTO";
     case MENU_HANDLE_U_RATIO:

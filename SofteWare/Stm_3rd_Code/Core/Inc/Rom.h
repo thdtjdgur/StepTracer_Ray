@@ -35,6 +35,10 @@ void save_accel_rom(void);
 void load_accel_rom(void);
 void save_handle_rom(void);
 void load_handle_rom(void);
+void save_speed_handle_rom(void);
+void load_speed_handle_rom(void);
+void save_turnmark_setting_rom(void);
+void load_turnmark_setting_rom(void);
 
 void write_mark_cnt_rom(void);
 void write_line_info_rom(void);

@@ -1,6 +1,7 @@
-﻿#include "search.h"
+#include "search.h"
 
 #include "Motor.h"
+#include "OLED.h"
 #include "Rom.h"
 #include "sensor.h"
 
@@ -65,6 +66,7 @@ void Race_Init(void)
     g_fp32time = 0.0f;
     U16_turnmark_cnt = 0u;
     U16_3rd_turnmark_cnt = 0u;
+    load_turnmark_setting_rom();
 
     position_shift = 0;
     HanPID.Kp_val = 1.0f;
@@ -98,20 +100,21 @@ void Race_Init(void)
         g_u32_END_ACC_targetval = (uint32_t)MOTOR_LIMIT_STOP_ACC;
     }
     PID_Kp_U32 = 85u;
-    ACCEL_COEF_I32 = 310;
-    DECEL_COEF_I32 = 266;
+    ACCEL_COEF_I32 = 296;
+    DECEL_COEF_I32 = 256;
     D_RATIO_I32 = 2;
     U_RATIO_I32 = 2;
     Down_Kp_U32 = 5u;
-    S44S_short_KP_U32 = 13u;
-    S44S_long_KP_U32 = 10u;
+    S44S_short_KP_U32 = 6u;
+    S44S_long_KP_U32 = 6u;
     S4444S_KP_U32 = 37u;
     S4_KP_U32 = 29u;
     S9999S_KP_U32 = 10u;
     SHARP_KP_U32 = 40u;
     mid_long_straight = 25u;
     short_straight = 25u;
-    s44s_end_s = 20u;
+    s44s_end_s = 50u;
+    load_speed_handle_rom();
 
     search_reset_run_distance();
     search_final_line_saved = OFF;
@@ -139,6 +142,8 @@ void search_race(void)
     g_Flag.second_race = OFF;
     g_Flag.stop_check = OFF;
 
+    HAL_Delay(RACE_START_DELAY_MS);
+
     MOVE_TO_MOVE(500.0f,
                  0.0f,
                  (float)g_u32_VEL_targetval,
@@ -164,6 +169,7 @@ void Search_RaceTask(void)
     }
     search_last_sensor_frame = sensor_frame;
 
+    make_position();
     Handle();
 
     turnmark_distance = (RMotor.TurnMarkCheckDistance + LMotor.TurnMarkCheckDistance) * 0.5f;
@@ -320,7 +326,9 @@ int race_stop_check(void)
     if ((RMotor.NextVelocity < 20.0f) && (LMotor.NextVelocity < 20.0f))
     {
         g_Flag.motor = OFF;
-        Motor_StopPwm();
+        SensorBoardLed_BothOn();
+        Motor_HoldPosition(END_LED_HOLD_MS);
+        SensorBoardLed_Off();
 
         g_Flag.first_race = OFF;
         g_Flag.move_state = OFF;

@@ -40,6 +40,14 @@ extern SPI_HandleTypeDef hspi1;
 #define ROM_SST_CAPACITY_BYTES       0x00040000u
 #define ROM_SPI_TIMEOUT_MS           100u
 #define ROM_WRITE_TIMEOUT_MS         500u
+#define SPEED_HANDLE_STEP_U32        50u
+#define SPEED_HANDLE_MAX_U32         4500u
+#define SPEED_HANDLE_SLOT_COUNT      ((SPEED_HANDLE_MAX_U32 / SPEED_HANDLE_STEP_U32) + 1u)
+#define SPEED_HANDLE_DEFAULT_ACCEL   296
+#define SPEED_HANDLE_DEFAULT_DECEL   256
+#define SPEED_HANDLE_LEGACY_SPEED    2000u
+#define SPEED_HANDLE_FORMAT_MARKER   0xA501u
+#define SPEED_HANDLE_MARKER_OFFSET   (ROM_PAGE_SIZE - 2u)
 
 typedef enum
 {
@@ -75,7 +83,10 @@ typedef enum
     LINE_DECEL_PAGE_2,
 
     HANDLE_ACC_PAGE,
-    HANDLE_DEC_PAGE
+    HANDLE_DEC_PAGE,
+    TURNMARK_SETTING_PAGE,
+    HANDLE_END_ACC_PAGE,
+    HANDLE_FAST_END_ACC_PAGE
 } rom_page;
 
 static rom_flash_type_t rom_flash_type = ROM_FLASH_UNKNOWN;
@@ -812,6 +823,94 @@ static void rom_write_u16_bytes(uint16_t *buf, uint16_t *index, uint16_t value)
     buf[(*index)++] = (uint16_t)((value >> 8) & 0x00FFu);
 }
 
+static uint16_t rom_speed_handle_slot(uint32_t speed)
+{
+    uint32_t slot;
+
+    if (speed > SPEED_HANDLE_MAX_U32)
+    {
+        speed = SPEED_HANDLE_MAX_U32;
+    }
+
+    slot = (speed + (SPEED_HANDLE_STEP_U32 / 2u)) / SPEED_HANDLE_STEP_U32;
+    if (slot >= SPEED_HANDLE_SLOT_COUNT)
+    {
+        slot = SPEED_HANDLE_SLOT_COUNT - 1u;
+    }
+
+    return (uint16_t)slot;
+}
+
+static void rom_write_speed_handle_value(rom_page page, uint16_t slot, uint16_t value)
+{
+    uint16_t index = (uint16_t)(slot * 2u);
+
+    memset(rom_transfer_buf, 0x00, sizeof(rom_transfer_buf));
+    SpiReadRom((uint16_t)page, 0u, (uint16_t)LINE_INFO, rom_transfer_buf);
+
+    rom_transfer_buf[index] = (uint16_t)((value >> 0) & 0x00FFu);
+    rom_transfer_buf[(uint16_t)(index + 1u)] = (uint16_t)((value >> 8) & 0x00FFu);
+    SpiWriteRom((uint16_t)page, 0u, (uint16_t)LINE_INFO, rom_transfer_buf);
+}
+
+static uint16_t rom_read_speed_handle_value(rom_page page, uint16_t slot)
+{
+    uint16_t value;
+
+    memset(rom_transfer_buf, 0, sizeof(rom_transfer_buf));
+    SpiReadRom((uint16_t)page, (uint16_t)(slot * 2u), 2u, rom_transfer_buf);
+
+    value = (uint16_t)((rom_transfer_buf[0] & 0x00FFu) << 0);
+    value |= (uint16_t)((rom_transfer_buf[1] & 0x00FFu) << 8);
+
+    return value;
+}
+
+static void rom_prepare_speed_handle_storage(void)
+{
+    uint16_t marker_bytes[2] = {0u, 0u};
+    uint16_t marker;
+    uint16_t legacy_slot;
+
+    SpiReadRom((uint16_t)HANDLE_ACC_PAGE,
+               (uint16_t)SPEED_HANDLE_MARKER_OFFSET,
+               2u,
+               marker_bytes);
+    if (Rom_LastOperationOk() == 0u)
+    {
+        return;
+    }
+
+    marker = (uint16_t)((marker_bytes[0] & 0x00FFu) |
+                        ((marker_bytes[1] & 0x00FFu) << 8));
+    if (marker == SPEED_HANDLE_FORMAT_MARKER)
+    {
+        return;
+    }
+
+    legacy_slot = rom_speed_handle_slot(SPEED_HANDLE_LEGACY_SPEED);
+    rom_write_speed_handle_value(HANDLE_ACC_PAGE, legacy_slot,
+                                 (uint16_t)SPEED_HANDLE_DEFAULT_ACCEL);
+    if (Rom_LastOperationOk() == 0u)
+    {
+        return;
+    }
+
+    rom_write_speed_handle_value(HANDLE_DEC_PAGE, legacy_slot,
+                                 (uint16_t)SPEED_HANDLE_DEFAULT_DECEL);
+    if (Rom_LastOperationOk() == 0u)
+    {
+        return;
+    }
+
+    marker_bytes[0] = (uint16_t)(SPEED_HANDLE_FORMAT_MARKER & 0x00FFu);
+    marker_bytes[1] = (uint16_t)((SPEED_HANDLE_FORMAT_MARKER >> 8) & 0x00FFu);
+    SpiWriteRom((uint16_t)HANDLE_ACC_PAGE,
+                (uint16_t)SPEED_HANDLE_MARKER_OFFSET,
+                2u,
+                marker_bytes);
+}
+
 void maxmin_write_rom(void)
 {
     uint16_t index = 0u;
@@ -1047,6 +1146,95 @@ void load_handle_rom(void)
     }
 }
 
+void save_speed_handle_rom(void)
+{
+    const uint16_t slot = rom_speed_handle_slot(g_u32_VEL_targetval);
+
+    rom_write_speed_handle_value(HANDLE_ACC_PAGE, slot, (uint16_t)((int16_t)ACCEL_COEF_I32));
+    if (Rom_LastOperationOk() == 0u)
+    {
+        return;
+    }
+
+    rom_write_speed_handle_value(HANDLE_DEC_PAGE, slot, (uint16_t)((int16_t)DECEL_COEF_I32));
+    if (Rom_LastOperationOk() == 0u)
+    {
+        return;
+    }
+
+    rom_write_speed_handle_value(HANDLE_FAST_END_ACC_PAGE,
+                                 slot,
+                                 (uint16_t)g_u32_second_END_ACC_targetval);
+}
+
+void load_speed_handle_rom(void)
+{
+    uint16_t slot;
+    uint16_t raw_acc;
+    uint16_t raw_dec;
+    uint16_t raw_fast_end_acc;
+
+    rom_prepare_speed_handle_storage();
+    slot = rom_speed_handle_slot(g_u32_VEL_targetval);
+    raw_acc = rom_read_speed_handle_value(HANDLE_ACC_PAGE, slot);
+    raw_dec = rom_read_speed_handle_value(HANDLE_DEC_PAGE, slot);
+    raw_fast_end_acc = rom_read_speed_handle_value(HANDLE_FAST_END_ACC_PAGE, slot);
+
+    ACCEL_COEF_I32 = (raw_acc != 0xFFFFu) ? (int16_t)raw_acc : SPEED_HANDLE_DEFAULT_ACCEL;
+    DECEL_COEF_I32 = (raw_dec != 0xFFFFu) ? (int16_t)raw_dec : SPEED_HANDLE_DEFAULT_DECEL;
+    g_u32_second_END_ACC_targetval = (raw_fast_end_acc != 0xFFFFu)
+                                         ? raw_fast_end_acc
+                                         : 11500u;
+}
+
+
+void save_turnmark_setting_rom(void)
+{
+    uint16_t index = 0u;
+
+    memset(rom_transfer_buf, 0, sizeof(rom_transfer_buf));
+    rom_write_u16_bytes(rom_transfer_buf, &index, g_u16turn_dist);
+    rom_write_u16_bytes(rom_transfer_buf, &index, Turn_Cnt);
+    rom_write_u16_bytes(rom_transfer_buf, &index, (X45_CONT_LIMIT_OFF_U16 != OFF) ? ON : OFF);
+    rom_write_u16_bytes(rom_transfer_buf, &index, (X90_CONT_LIMIT_OFF_U16 != OFF) ? ON : OFF);
+    SpiWriteRom((uint16_t)TURNMARK_SETTING_PAGE, 0u, 8u, rom_transfer_buf);
+}
+
+void load_turnmark_setting_rom(void)
+{
+    uint16_t index = 0u;
+    uint16_t raw[4];
+
+    memset(rom_transfer_buf, 0, sizeof(rom_transfer_buf));
+    SpiReadRom((uint16_t)TURNMARK_SETTING_PAGE, 0u, 8u, rom_transfer_buf);
+    if (Rom_LastOperationOk() == 0u)
+    {
+        return;
+    }
+
+    for (uint16_t i = 0u; i < 4u; i++)
+    {
+        raw[i] = rom_u16_from_bytes(rom_transfer_buf, &index);
+    }
+
+    if (raw[0] != 0xFFFFu)
+    {
+        g_u16turn_dist = raw[0];
+        T___dist = g_u16turn_dist;
+    }
+    if (raw[1] != 0xFFFFu)
+    {
+        Turn_Cnt = raw[1];
+    }
+    if (raw[2] != 0xFFFFu)
+    {
+        X45_CONT_LIMIT_OFF_U16 = (raw[2] != 0u) ? ON : OFF;
+    }
+    if (raw[3] != 0xFFFFu)
+    {
+        X90_CONT_LIMIT_OFF_U16 = (raw[3] != 0u) ? ON : OFF;
+    }
+}
 void write_mark_cnt_rom(void)
 {
     uint16_t saved_count = 0u;

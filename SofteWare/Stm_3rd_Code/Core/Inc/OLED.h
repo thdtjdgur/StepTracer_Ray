@@ -14,6 +14,7 @@ extern "C" {
 
 HAL_StatusTypeDef OLED_Init(void);
 HAL_StatusTypeDef OLED_Update(void);
+HAL_StatusTypeDef OLED_DisplayOff(void);
 void OLED_Clear(void);
 void OLED_SetCursor(uint8_t column, uint8_t row);
 void OLED_WriteChar(char ch);
