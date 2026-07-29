@@ -984,6 +984,7 @@ void CONTROL_ISR(void)
     float segment_distance;
     volatile race_info *line;
     float shift_before_update;
+    float kp_target;
     uint8_t zero_prepare;
     uint8_t zero_hold;
 
@@ -1026,23 +1027,23 @@ void CONTROL_ISR(void)
 
     segment_distance = (LMotor.RealDistance + RMotor.RealDistance) * 0.5f;
 
-    if ((zero_prepare != 0u) || (zero_hold != 0u))
-    {
-        HanPID.Kp_val = THIRD_FIXED_KP;
-    }
-    else if (line->DownFlag_U16 != OFF)
-    {
-        xCONTROL(ON,
-                 &HanPID,
-                 ((float)D_RATIO_I32) * 0.0001f * THIRD_KP_PERIOD_SCALE,
-                 line->Kp_UpDown);
-    }
-    else
+    kp_target = ((zero_prepare != 0u) || (zero_hold != 0u))
+                    ? THIRD_FIXED_KP
+                    : line->Kp_UpDown;
+
+    if (HanPID.Kp_val < kp_target)
     {
         xCONTROL(OFF,
                  &HanPID,
                  ((float)U_RATIO_I32) * 0.0001f * THIRD_KP_PERIOD_SCALE,
-                 line->Kp_UpDown);
+                 kp_target);
+    }
+    else if (HanPID.Kp_val > kp_target)
+    {
+        xCONTROL(ON,
+                 &HanPID,
+                 ((float)D_RATIO_I32) * 0.0001f * THIRD_KP_PERIOD_SCALE,
+                 kp_target);
     }
 
     control_shift_distance += moved_distance;

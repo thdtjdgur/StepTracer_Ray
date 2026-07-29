@@ -22,7 +22,7 @@ extern "C" {
 #define SENSOR_RAW_MAX        4095.0f
 #define SENSOR_NORM_MAX       127.0f
 #define SENSOR_ON_THRESHOLD   35.0f
-#define SENSOR_STATE_THRESHOLD 50.0f
+#define SENSOR_STATE_THRESHOLD 85.0f
 #define POS_END              16000.0f
 #define MAX_PID              16000.0f
 

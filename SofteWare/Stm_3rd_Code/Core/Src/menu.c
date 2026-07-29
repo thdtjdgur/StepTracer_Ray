@@ -33,6 +33,8 @@
 #define MENU_HANDLE_MIN_I32 (-32768)
 #define MENU_HANDLE_MAX_I32 32767
 #define MENU_HANDLE_KP_MAX_U32 65535u
+#define MENU_SLEW_MIN_TENTHS 0u
+#define MENU_SLEW_MAX_TENTHS 10u
 #define MENU_TURNMARK_REPEAT_MS 100u
 
 #define MENU_ROW_COUNT 6u
@@ -71,6 +73,7 @@ typedef enum
     MENU_EDIT_SPEED,
     MENU_EDIT_JERK,
     MENU_EDIT_HANDLE,
+    MENU_EDIT_SLEW,
     MENU_EDIT_TURNMARK
 } menu_edit_t;
 
@@ -104,11 +107,18 @@ typedef enum
 
 typedef enum
 {
+    MENU_SLEW_ATTACK = 0,
+    MENU_SLEW_RELEASE
+} menu_slew_item_t;
+
+typedef enum
+{
     MENU_SAVE_NONE = 0,
     MENU_SAVE_MAXMIN,
     MENU_SAVE_SPEED,
     MENU_SAVE_JERK,
     MENU_SAVE_HANDLE,
+    MENU_SAVE_SLEW,
     MENU_SAVE_TURNMARK,
     MENU_SAVE_XLIMIT,
     MENU_SAVE_ERROR
@@ -117,7 +127,7 @@ typedef enum
 static const uint8_t menu_last_col[MENU_ROW_COUNT] = {
     4u,
     3u,
-    3u,
+    5u,
     2u,
     5u,
     2u,
@@ -126,7 +136,7 @@ static const uint8_t menu_last_col[MENU_ROW_COUNT] = {
 static const char *const menu_label[MENU_ROW_COUNT][MENU_COL_COUNT] = {
     {"_SENSOR_", "VFD_4095", "_MAXMIN_", "_VFD_127", "POSITION", ""},
     {"_MOTOR__", "_VFD_1__", "_VFD_2__", "_VFD_3__", "", ""},
-    {"Oled_Run", "_V_VELO_", "HanAccel", "HanDecel", "", ""},
+    {"Oled_Run", "_V_VELO_", "HanAccel", "HanDecel", "H_Attack", "H_Release"},
     {"TURNMARK", "turndist", "t__limit", "", "", ""},
     {"OledAccel", "JRK", "J_L", "J_M", "J_S", "EndDecel"},
     {"X_LIMIT", "x45_lim", "x90_lim", "", "", ""},
@@ -145,6 +155,7 @@ static race_result_view_t race_result_view;
 static menu_edit_t edit_mode;
 static menu_jerk_item_t jerk_item;
 static menu_handle_item_t handle_item;
+static menu_slew_item_t slew_item;
 static menu_turnmark_item_t turnmark_item;
 static menu_save_status_t save_status;
 
@@ -178,6 +189,7 @@ static void Menu_RenderRaceStarting(const char *race_name);
 static void Menu_RenderSpeed(void);
 static void Menu_RenderJerk(void);
 static void Menu_RenderRunHandle(menu_handle_item_t item);
+static void Menu_RenderSlew(menu_slew_item_t item);
 static void Menu_RenderTurnmark(void);
 static void Menu_RenderXLimit(void);
 static void Menu_ToggleXLimit(uint8_t col);
@@ -198,6 +210,9 @@ static void Menu_SetHandleValue(menu_handle_item_t item, int32_t value);
 static void Menu_AdjustHandle(int8_t direction);
 static void Menu_NextHandleItem(void);
 static void Menu_ClampHandleParams(void);
+static uint8_t Menu_SlewTenths(menu_slew_item_t item);
+static void Menu_SetSlewTenths(menu_slew_item_t item, uint8_t tenths);
+static void Menu_AdjustSlew(int8_t direction);
 static void Menu_AdjustTurnmark(int8_t direction);
 static void Menu_SaveEditValue(void);
 static const char *Menu_SaveText(menu_save_status_t expected);
@@ -217,6 +232,7 @@ void Menu_Init(void)
     edit_mode = MENU_EDIT_NONE;
     jerk_item = MENU_JERK_BASE;
     handle_item = MENU_HANDLE_ACCEL;
+    slew_item = MENU_SLEW_ATTACK;
     turnmark_item = MENU_TURNMARK_DISTANCE;
     save_status = MENU_SAVE_NONE;
     memset(button_latched, 0, sizeof(button_latched));
@@ -229,6 +245,7 @@ void Menu_Init(void)
     read_vel_rom();
     load_accel_rom();
     load_handle_rom();
+    load_handle_slew_rom();
     load_turnmark_setting_rom();
     Menu_SetSpeed((uint32_t)g_u32_VEL_targetval);
     Menu_ClampJerkParams();
@@ -525,10 +542,11 @@ static uint8_t Menu_ConsumeButton(menu_button_t button)
     {
         repeat_delay = MENU_TURNMARK_REPEAT_MS;
     }
-    else if ((edit_mode == MENU_EDIT_HANDLE) &&
-               ((handle_item == MENU_HANDLE_ACCEL) ||
-                (handle_item == MENU_HANDLE_DECEL) ||
-                (handle_item == MENU_HANDLE_FAST_END_DECEL)))
+    else if (((edit_mode == MENU_EDIT_HANDLE) &&
+              ((handle_item == MENU_HANDLE_ACCEL) ||
+               (handle_item == MENU_HANDLE_DECEL) ||
+               (handle_item == MENU_HANDLE_FAST_END_DECEL))) ||
+             (edit_mode == MENU_EDIT_SLEW))
     {
         repeat_delay = MENU_HANDLE_ACCEL_REPEAT_MS;
     }
@@ -745,6 +763,18 @@ static void Menu_ExecuteCurrent(void)
             edit_mode = MENU_EDIT_HANDLE;
             save_status = MENU_SAVE_NONE;
         }
+        else if (menu_col == 4u)
+        {
+            slew_item = MENU_SLEW_ATTACK;
+            edit_mode = MENU_EDIT_SLEW;
+            save_status = MENU_SAVE_NONE;
+        }
+        else if (menu_col == 5u)
+        {
+            slew_item = MENU_SLEW_RELEASE;
+            edit_mode = MENU_EDIT_SLEW;
+            save_status = MENU_SAVE_NONE;
+        }
         break;
 
     case MENU_ROW_ACCEL:
@@ -937,6 +967,12 @@ static void Menu_HandleEditButtons(void)
             }
             save_status = MENU_SAVE_NONE;
         }
+        else if (edit_mode == MENU_EDIT_SLEW)
+        {
+            slew_item = (slew_item == MENU_SLEW_ATTACK) ? MENU_SLEW_RELEASE : MENU_SLEW_ATTACK;
+            menu_col = (slew_item == MENU_SLEW_ATTACK) ? 4u : 5u;
+            save_status = MENU_SAVE_NONE;
+        }
         Menu_RequestRender();
     }
 
@@ -953,6 +989,10 @@ static void Menu_HandleEditButtons(void)
         else if (edit_mode == MENU_EDIT_HANDLE)
         {
             Menu_AdjustHandle(1);
+        }
+        else if (edit_mode == MENU_EDIT_SLEW)
+        {
+            Menu_AdjustSlew(1);
         }
         save_status = MENU_SAVE_NONE;
         Menu_RequestRender();
@@ -971,6 +1011,10 @@ static void Menu_HandleEditButtons(void)
         else if (edit_mode == MENU_EDIT_HANDLE)
         {
             Menu_AdjustHandle(-1);
+        }
+        else if (edit_mode == MENU_EDIT_SLEW)
+        {
+            Menu_AdjustSlew(-1);
         }
         save_status = MENU_SAVE_NONE;
         Menu_RequestRender();
@@ -1032,6 +1076,14 @@ static void Menu_RenderCurrent(void)
     else if ((menu_row == MENU_ROW_RUN) && (menu_col == 3u))
     {
         Menu_RenderRunHandle(MENU_HANDLE_DECEL);
+    }
+    else if ((menu_row == MENU_ROW_RUN) && (menu_col == 4u))
+    {
+        Menu_RenderSlew(MENU_SLEW_ATTACK);
+    }
+    else if ((menu_row == MENU_ROW_RUN) && (menu_col == 5u))
+    {
+        Menu_RenderSlew(MENU_SLEW_RELEASE);
     }
     else if ((menu_row == MENU_ROW_TURNMARK) && (menu_col > 0u))
     {
@@ -1377,6 +1429,23 @@ static void Menu_RenderRunHandle(menu_handle_item_t default_item)
     }
 }
 
+static void Menu_RenderSlew(menu_slew_item_t default_item)
+{
+    const menu_slew_item_t item = (edit_mode == MENU_EDIT_SLEW) ? slew_item : default_item;
+    const uint8_t tenths = Menu_SlewTenths(item);
+
+    OLED_Clear();
+    OLED_PrintTitle("HandleSlew");
+    OLED_Printf(2u, "%s:%u.%u",
+                (item == MENU_SLEW_ATTACK) ? "ATK" : "REL",
+                (unsigned int)(tenths / 10u),
+                (unsigned int)(tenths % 10u));
+    if (save_status != MENU_SAVE_NONE)
+    {
+        OLED_Printf(3u, "%s", Menu_SaveText(MENU_SAVE_SLEW));
+    }
+}
+
 static void Menu_RenderTurnmark(void)
 {
     const uint8_t editing = (edit_mode == MENU_EDIT_TURNMARK) ? 1u : 0u;
@@ -1714,6 +1783,45 @@ static void Menu_ClampHandleParams(void)
     }
 }
 
+static uint8_t Menu_SlewTenths(menu_slew_item_t item)
+{
+    const float value = (item == MENU_SLEW_ATTACK) ? HANDLE_ATTACK_ALPHA : HANDLE_RELEASE_ALPHA;
+    int32_t tenths = (int32_t)((value * 10.0f) + 0.5f);
+
+    tenths = Menu_ClampI32(tenths, (int32_t)MENU_SLEW_MIN_TENTHS, (int32_t)MENU_SLEW_MAX_TENTHS);
+    return (uint8_t)tenths;
+}
+
+static void Menu_SetSlewTenths(menu_slew_item_t item, uint8_t tenths)
+{
+    const float value = (float)tenths * 0.1f;
+
+    if (item == MENU_SLEW_ATTACK)
+    {
+        HANDLE_ATTACK_ALPHA = value;
+    }
+    else
+    {
+        HANDLE_RELEASE_ALPHA = value;
+    }
+}
+
+static void Menu_AdjustSlew(int8_t direction)
+{
+    uint8_t tenths = Menu_SlewTenths(slew_item);
+
+    if ((direction > 0) && (tenths < MENU_SLEW_MAX_TENTHS))
+    {
+        tenths++;
+    }
+    else if ((direction < 0) && (tenths > MENU_SLEW_MIN_TENTHS))
+    {
+        tenths--;
+    }
+
+    Menu_SetSlewTenths(slew_item, tenths);
+}
+
 static void Menu_AdjustTurnmark(int8_t direction)
 {
     if (turnmark_item == MENU_TURNMARK_DISTANCE)
@@ -1763,6 +1871,11 @@ static void Menu_SaveEditValue(void)
         save_speed_handle_rom();
         save_ok = (uint8_t)(save_ok & Rom_LastOperationOk());
         save_status = (save_ok != 0u) ? MENU_SAVE_HANDLE : MENU_SAVE_ERROR;
+    }
+    else if (edit_mode == MENU_EDIT_SLEW)
+    {
+        save_handle_slew_rom();
+        save_status = (Rom_LastOperationOk() != 0u) ? MENU_SAVE_SLEW : MENU_SAVE_ERROR;
     }
     else if (edit_mode == MENU_EDIT_TURNMARK)
     {

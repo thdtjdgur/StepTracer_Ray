@@ -7,6 +7,7 @@
 #include "search.h"
 #include "stm32g4xx_ll_gpio.h"
 
+#include <math.h>
 #include <stddef.h>
 #include <string.h>
 
@@ -19,6 +20,9 @@
 #define LINE_OUT_FRAME_LIMIT \
     ((LINE_OUT_TIMEOUT_US + SENSOR_CONTROL_FRAME_US - 1u) / SENSOR_CONTROL_FRAME_US)
 #define HANDLE_MAX_PID        12.0f
+
+float HANDLE_ATTACK_ALPHA = 1.0f;
+float HANDLE_RELEASE_ALPHA = 1.0f;
 
 static const float sensor_weights[ADC_NUM] = {
     -16000.0f, -13000.0f, -11000.0f, -8900.0f,
@@ -57,6 +61,8 @@ static const uint16_t state_table[] = {
 #define LEFT_TURNMARK_LED_PIN           GPIO_PIN_11
 #define RIGHT_TURNMARK_LED_PIN          GPIO_PIN_2
 #define BUZZER_PIN                      GPIO_PIN_11
+#define SENSOR_INDEX_0_MASK             0x8000u
+#define SENSOR_INDEX_15_MASK            0x0001u
 
 static const uint16_t emitter_pins[SEN_NUM] = {
     GPIO_PIN_8, GPIO_PIN_9, GPIO_PIN_10, GPIO_PIN_11,
@@ -122,6 +128,25 @@ static float clampf(float value, float min_value, float max_value)
         return max_value;
     }
     return value;
+}
+
+static float handle_slew(float current, float target)
+{
+    const float current_error = current - 1.0f;
+    const float target_error = target - 1.0f;
+    float alpha;
+
+    if ((current_error * target_error < 0.0f) ||
+        (fabsf(target_error) > fabsf(current_error)))
+    {
+        alpha = HANDLE_ATTACK_ALPHA;
+    }
+    else
+    {
+        alpha = HANDLE_RELEASE_ALPHA;
+    }
+
+    return current + alpha * (target - current);
 }
 
 void sen_vari_init(void)
@@ -938,8 +963,8 @@ void Handle(void)
         }
     }
 
-    LMotor.TargetHandle = left_handle;
-    RMotor.TargetHandle = right_handle;
+    LMotor.TargetHandle = handle_slew(LMotor.TargetHandle, left_handle);
+    RMotor.TargetHandle = handle_slew(RMotor.TargetHandle, right_handle);
 }
 
 void if_lineout(void)
@@ -1139,11 +1164,13 @@ static void mark_enable_shift(volatile turnmark_t *pleft, volatile turnmark_t *p
     if ((g_shift.u16sen_enable & RIGHT_ENABLE) != 0u)
     {
         pleft->mark_enable = (uint16_t)(LEFT_ENABLE >> g_shift.u16sen_state);
-        pright->mark_enable = (uint16_t)(RIGHT_ENABLE >> g_shift.u16sen_state);
+        pright->mark_enable = (uint16_t)((RIGHT_ENABLE >> g_shift.u16sen_state) |
+                                         SENSOR_INDEX_15_MASK);
     }
     else if ((g_shift.u16sen_enable & LEFT_ENABLE) != 0u)
     {
-        pleft->mark_enable = (uint16_t)(LEFT_ENABLE << g_shift.u16sen_state);
+        pleft->mark_enable = (uint16_t)((LEFT_ENABLE << g_shift.u16sen_state) |
+                                        SENSOR_INDEX_0_MASK);
         pright->mark_enable = (uint16_t)(RIGHT_ENABLE << g_shift.u16sen_state);
     }
     else

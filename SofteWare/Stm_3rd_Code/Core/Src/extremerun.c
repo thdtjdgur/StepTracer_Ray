@@ -1278,10 +1278,8 @@ void kp_division_func(void)
 void xCONTROL(uint8_t mode,
               volatile handle_pid_t *handle,
               float ratio,
-              float kp_min)
+              float kp_target)
 {
-    const float kp_max = ((float)PID_Kp_U32) * 0.01f;
-
     if (handle == NULL)
     {
         return;
@@ -1290,17 +1288,17 @@ void xCONTROL(uint8_t mode,
     if (mode == OFF)
     {
         handle->Kp_val += ratio * MOTOR_STEP_DISTANCE_MM;
-        if (handle->Kp_val > kp_max)
+        if (handle->Kp_val > kp_target)
         {
-            handle->Kp_val = kp_max;
+            handle->Kp_val = kp_target;
         }
     }
     else
     {
         handle->Kp_val -= ratio * MOTOR_STEP_DISTANCE_MM;
-        if (handle->Kp_val < kp_min)
+        if (handle->Kp_val < kp_target)
         {
-            handle->Kp_val = kp_min;
+            handle->Kp_val = kp_target;
         }
     }
 }

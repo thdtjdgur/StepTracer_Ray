@@ -26,7 +26,7 @@ void kp_division_compute(volatile race_info *pinfo, int32_t mark);
 void xCONTROL(uint8_t mode,
               volatile handle_pid_t *handle,
               float ratio,
-              float kp_min);
+              float kp_target);
 
 #ifdef __cplusplus
 }

@@ -37,6 +37,8 @@ void save_handle_rom(void);
 void load_handle_rom(void);
 void save_speed_handle_rom(void);
 void load_speed_handle_rom(void);
+void save_handle_slew_rom(void);
+void load_handle_slew_rom(void);
 void save_turnmark_setting_rom(void);
 void load_turnmark_setting_rom(void);
 

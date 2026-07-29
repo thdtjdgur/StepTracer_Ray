@@ -15,6 +15,9 @@ typedef enum
     SENSOR_CALIBRATION_MIN
 } sensor_calibration_phase_t;
 
+extern float HANDLE_ATTACK_ALPHA;
+extern float HANDLE_RELEASE_ALPHA;
+
 void sen_vari_init(void);
 HAL_StatusTypeDef Sensor_HardwareStart(void);
 void Sensor_HardwareStop(void);

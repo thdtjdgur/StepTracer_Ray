@@ -3,6 +3,7 @@
 #include "Motor.h"
 #include "Variable.h"
 #include "main.h"
+#include "sensor.h"
 
 #include <string.h>
 
@@ -48,6 +49,7 @@ extern SPI_HandleTypeDef hspi1;
 #define SPEED_HANDLE_LEGACY_SPEED    2000u
 #define SPEED_HANDLE_FORMAT_MARKER   0xA501u
 #define SPEED_HANDLE_MARKER_OFFSET   (ROM_PAGE_SIZE - 2u)
+#define HANDLE_SLEW_FORMAT_MARKER    0xA51Eu
 
 typedef enum
 {
@@ -86,7 +88,8 @@ typedef enum
     HANDLE_DEC_PAGE,
     TURNMARK_SETTING_PAGE,
     HANDLE_END_ACC_PAGE,
-    HANDLE_FAST_END_ACC_PAGE
+    HANDLE_FAST_END_ACC_PAGE,
+    HANDLE_SLEW_PAGE
 } rom_page;
 
 static rom_flash_type_t rom_flash_type = ROM_FLASH_UNKNOWN;
@@ -1185,6 +1188,53 @@ void load_speed_handle_rom(void)
     g_u32_second_END_ACC_targetval = (raw_fast_end_acc != 0xFFFFu)
                                          ? raw_fast_end_acc
                                          : 11500u;
+}
+
+void save_handle_slew_rom(void)
+{
+    uint16_t index = 0u;
+    float attack = HANDLE_ATTACK_ALPHA;
+    float release = HANDLE_RELEASE_ALPHA;
+
+    if (attack < 0.0f) attack = 0.0f;
+    if (attack > 1.0f) attack = 1.0f;
+    if (release < 0.0f) release = 0.0f;
+    if (release > 1.0f) release = 1.0f;
+
+    memset(rom_transfer_buf, 0, sizeof(rom_transfer_buf));
+    rom_write_u16_bytes(rom_transfer_buf, &index, (uint16_t)((attack * 10.0f) + 0.5f));
+    rom_write_u16_bytes(rom_transfer_buf, &index, (uint16_t)((release * 10.0f) + 0.5f));
+    rom_write_u16_bytes(rom_transfer_buf, &index, HANDLE_SLEW_FORMAT_MARKER);
+    SpiWriteRom((uint16_t)HANDLE_SLEW_PAGE, 0u, 6u, rom_transfer_buf);
+}
+
+void load_handle_slew_rom(void)
+{
+    uint16_t index = 0u;
+    uint16_t raw_attack;
+    uint16_t raw_release;
+    uint16_t marker;
+
+    memset(rom_transfer_buf, 0, sizeof(rom_transfer_buf));
+    SpiReadRom((uint16_t)HANDLE_SLEW_PAGE, 0u, 6u, rom_transfer_buf);
+    if (Rom_LastOperationOk() == 0u)
+    {
+        return;
+    }
+
+    raw_attack = rom_u16_from_bytes(rom_transfer_buf, &index);
+    raw_release = rom_u16_from_bytes(rom_transfer_buf, &index);
+    marker = rom_u16_from_bytes(rom_transfer_buf, &index);
+
+    if ((marker != HANDLE_SLEW_FORMAT_MARKER) ||
+        (raw_attack > 10u) ||
+        (raw_release > 10u))
+    {
+        return;
+    }
+
+    HANDLE_ATTACK_ALPHA = (float)raw_attack * 0.1f;
+    HANDLE_RELEASE_ALPHA = (float)raw_release * 0.1f;
 }
 
 
