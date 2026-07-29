@@ -426,6 +426,7 @@ void Fast_ProfilePlanStraight(volatile race_info *line, uint16_t mark)
         line->dec_dist = computed_decel_distance;
         line->decel_acc = (float)line->int32accel;
     }
+
 }
 
 void turn_info_compute(volatile race_info *pinfo, int32_t mark_cnt)

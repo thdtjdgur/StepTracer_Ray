@@ -824,7 +824,7 @@ int line_out_func(void)
 static uint32_t sensor_first_end_accel_for_speed(uint32_t speed)
 {
     static const uint16_t speed_table[] = {2000u, 2100u, 2200u, 2300u, 2350u, 2400u};
-    static const uint16_t accel_table[] = {7500u, 8000u, 9000u, 8500u, 12000u, 12500u};
+    static const uint16_t accel_table[] = {8200u, 8800u, 9500u, 10500u, 12000u, 12500u};
     const uint32_t table_count = (uint32_t)(sizeof(speed_table) / sizeof(speed_table[0]));
 
     if (speed <= speed_table[0])
