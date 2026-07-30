@@ -911,7 +911,7 @@ void start_end_check(void)
     else if (g_Flag.second_race == ON)
     {
         g_u32_second_END_ACC_targetval += end_accel;
-        MOVE_TO_END_ACCEL(270.0f, (float)g_u32_second_END_ACC_targetval);
+        MOVE_TO_END_ACCEL(280.0f, (float)g_u32_second_END_ACC_targetval);
         LMotor.GoneDistance = 0.0f;
         RMotor.GoneDistance = 0.0f;
     }

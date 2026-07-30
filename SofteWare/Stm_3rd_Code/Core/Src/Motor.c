@@ -58,8 +58,8 @@ volatile uint32_t S44S_long_KP_U32 = 6u;
 volatile uint32_t S4444S_KP_U32 = 37u;
 volatile uint32_t S4_KP_U32 = 29u;
 volatile uint32_t S9999S_KP_U32 = 10u;
-volatile uint32_t mid_long_straight = 25u;
-volatile uint32_t short_straight = 25u;
+volatile uint32_t mid_long_straight = 37u;  //25
+volatile uint32_t short_straight = 37u; //25
 volatile uint32_t s44s_end_s = 50u;
 
 static uint32_t motor_timer_clock_hz = MOTOR_TIMER_CLOCK_FALLBACK;

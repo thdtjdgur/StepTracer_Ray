@@ -22,7 +22,7 @@ extern "C" {
 #define SENSOR_RAW_MAX        4095.0f
 #define SENSOR_NORM_MAX       127.0f
 #define SENSOR_ON_THRESHOLD   35.0f
-#define SENSOR_STATE_THRESHOLD 90.0f
+#define SENSOR_STATE_THRESHOLD 55.0f //실제 쓰는 값
 #define POS_END              16000.0f
 #define MAX_PID              16000.0f
 
@@ -33,7 +33,7 @@ extern "C" {
 
 #define SW_DELAY_MS 250u
 #define RACE_START_DELAY_MS 1000u
-#define END_LED_HOLD_MS 700u
+#define END_LED_HOLD_MS 500u
 
 #define STRAIGHT        0x0001u
 #define LEFT_TURN       0x0002u

@@ -23,9 +23,10 @@
 #define MENU_SPEED_MIN_U32 ((uint32_t)MIN_VELO)
 #define MENU_SPEED_MAX_U32 ((uint32_t)MAX_VELO)
 
-#define MENU_JERK_STEP_U32 50u
+#define MENU_JERK_STEP_U32 100u
 #define MENU_JERK_MIN_U32 0u
 #define MENU_JERK_MAX_U32 UINT16_MAX
+#define MENU_JERK_REPEAT_MS 125u
 
 #define MENU_HANDLE_STEP_I32 1
 #define MENU_END_ACCEL_STEP_I32 100
@@ -538,7 +539,11 @@ static uint8_t Menu_ConsumeButton(menu_button_t button)
     const uint32_t now = HAL_GetTick();
     uint32_t repeat_delay = SW_DELAY_MS;
 
-    if (edit_mode == MENU_EDIT_TURNMARK)
+    if (edit_mode == MENU_EDIT_JERK)
+    {
+        repeat_delay = MENU_JERK_REPEAT_MS;
+    }
+    else if (edit_mode == MENU_EDIT_TURNMARK)
     {
         repeat_delay = MENU_TURNMARK_REPEAT_MS;
     }
@@ -1287,6 +1292,7 @@ static void Menu_RenderMotorFast(fast_race_mode_t mode)
     const uint16_t total_mark = Fast_RaceTotalMarkCount();
     const uint16_t third_mark = Fast_RaceThirdMarkCount();
     const uint16_t error_count = Fast_RaceErrorCount();
+    const uint16_t extra_mark_count = Fast_RaceExtraMarkCount();
     const long velocity = (long)(((LMotor.NextVelocity + RMotor.NextVelocity) * 0.5f) + 0.5f);
     const long kp = (long)((HanPID.Kp_val * 100.0f) + 0.5f);
 
@@ -1325,10 +1331,10 @@ static void Menu_RenderMotorFast(fast_race_mode_t mode)
     {
         const uint32_t time_ms = Fast_RaceTimeMs();
 
-        OLED_PrintTitle("%s FINISH", race_name);
+        OLED_Printf(0u, "MISS:%u EXTRA:%u", error_count, extra_mark_count);
         OLED_Printf(2u, "T:%lu.%03lu", (unsigned long)(time_ms / 1000u),
                     (unsigned long)(time_ms % 1000u));
-        OLED_Printf(3u, "M:%u/%u E:%u", actual_mark, total_mark, error_count);
+        OLED_Printf(3u, "M:%u/%u", actual_mark, total_mark);
         return;
     }
 
@@ -1353,7 +1359,8 @@ static void Menu_RenderMotorFast(fast_race_mode_t mode)
     {
         OLED_PrintTitle("%s ERROR", race_name);
         OLED_Printf(2u, "%s", (status == FAST_RACE_MARK_ERROR) ? "MARK LOST" : "PROFILE DATA");
-        OLED_Printf(3u, "M:%u/%u E:%u", actual_mark, total_mark, error_count);
+        OLED_Printf(3u, "M:%u/%u L:%u X:%u", actual_mark, total_mark,
+                    error_count, extra_mark_count);
         return;
     }
 

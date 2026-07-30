@@ -17,7 +17,7 @@
 
 #define FAST_MARK_UNDER_RATIO       0.60f
 #define FAST_MARK_ERROR_MARGIN_MM   150.0f
-#define THIRD_MARK_LEAD_DISTANCE_MM 80.0f
+#define THIRD_MARK_LEAD_DISTANCE_MM 50.0f
 #define FAST_MAX_PROFILE_INDEX      253u
 #define FAST_MAX_MARK_ERRORS        20u
 #define FAST_PROFILE_DUMP_UART      1u
@@ -35,6 +35,7 @@ static volatile fast_race_status_t fast_race_status = FAST_RACE_IDLE;
 static volatile uint16_t fast_total_mark_count;
 static volatile uint16_t fast_finish_mark_count;
 static volatile uint16_t fast_mark_error_count;
+static volatile uint16_t fast_extra_mark_count;
 static volatile uint32_t fast_last_sensor_frame;
 
 static float fast_under_distance[256];
@@ -42,6 +43,8 @@ static float fast_error_distance[256];
 
 static float fast_clampf(float value, float min_value, float max_value);
 static uint8_t fast_is_straight(const volatile race_info *line);
+static uint8_t fast_is_45(const volatile race_info *line);
+static uint8_t fast_is_s44s_end(uint16_t mark);
 static uint8_t fast_line_info_valid(void);
 static void fast_make_mark_limits(void);
 static void fast_profile_divide_second(uint16_t mark);
@@ -224,6 +227,29 @@ static void fast_debug_dump_profile(void)
 static uint8_t fast_is_straight(const volatile race_info *line)
 {
     return ((line->int32turn_dir & (STRAIGHT | END_TURN)) != 0) ? 1u : 0u;
+}
+
+static uint8_t fast_is_45(const volatile race_info *line)
+{
+    return ((line != NULL) && (fast_is_straight(line) == 0u) &&
+            ((line->int32turn_dir & TURN_45) != 0))
+               ? 1u
+               : 0u;
+}
+
+static uint8_t fast_is_s44s_end(uint16_t mark)
+{
+    if ((mark < 3u) || (mark > fast_total_mark_count))
+    {
+        return 0u;
+    }
+
+    return ((fast_is_straight(&search_info[mark - 3u]) != 0u) &&
+            (fast_is_45(&search_info[mark - 2u]) != 0u) &&
+            (fast_is_45(&search_info[mark - 1u]) != 0u) &&
+            (fast_is_straight(&search_info[mark]) != 0u))
+               ? 1u
+               : 0u;
 }
 
 void decel_dist_compute(float current_velocity,
@@ -704,6 +730,7 @@ static void fast_reset_runtime(void)
 
     fast_finish_mark_count = 0u;
     fast_mark_error_count = 0u;
+    fast_extra_mark_count = 0u;
     fast_last_sensor_frame = Sensor_GetFrameCount();
 }
 
@@ -734,7 +761,8 @@ static void fast_load_segment(uint16_t mark)
     RMotor.DistanceSum = 0.0f;
 
     target_velocity = line->vel;
-    if ((mark > 0u) && ((line->int32turn_dir & STRAIGHT) != 0u))
+    if ((mark > 0u) && ((line->int32turn_dir & STRAIGHT) != 0u) &&
+        (fast_is_s44s_end(mark) == 0u))
     {
         target_velocity = line->in_vel;
         if (target_velocity < (float)MOTOR_SPEED_U32)
@@ -800,6 +828,7 @@ static void fast_start(fast_race_mode_t mode)
     fast_total_mark_count = 0u;
     fast_finish_mark_count = 0u;
     fast_mark_error_count = 0u;
+    fast_extra_mark_count = 0u;
 
     load_turnmark_setting_rom();
     (void)Sensor_HardwareStart();
@@ -868,6 +897,10 @@ void second_info(volatile race_info *p_info,
     if ((p_mark != NULL) &&
         (over_distance < fast_under_distance[U16_turnmark_cnt]))
     {
+        if (fast_extra_mark_count < UINT16_MAX)
+        {
+            fast_extra_mark_count++;
+        }
         return;
     }
 
@@ -1167,6 +1200,11 @@ uint16_t Fast_RaceThirdMarkCount(void)
 uint16_t Fast_RaceErrorCount(void)
 {
     return fast_mark_error_count;
+}
+
+uint16_t Fast_RaceExtraMarkCount(void)
+{
+    return fast_extra_mark_count;
 }
 
 uint32_t Fast_RaceTimeMs(void)

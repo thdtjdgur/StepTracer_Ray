@@ -71,6 +71,7 @@ uint16_t Fast_RaceTotalMarkCount(void);
 uint16_t Fast_RaceActualMarkCount(void);
 uint16_t Fast_RaceThirdMarkCount(void);
 uint16_t Fast_RaceErrorCount(void);
+uint16_t Fast_RaceExtraMarkCount(void);
 uint32_t Fast_RaceTimeMs(void);
 
 void second_info(volatile race_info *p_info,

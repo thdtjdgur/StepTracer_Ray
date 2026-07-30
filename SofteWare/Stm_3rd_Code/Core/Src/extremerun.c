@@ -9,14 +9,16 @@
 #define THIRD_KP_FLOOR 0.20f
 
 #define THIRD_CONTINUOUS_TURN_MAX_SPEED 2500.0f
-#define THIRD_SHIFT_LARGE               1000.0f
-#define THIRD_SHIFT_270                 1000.0f
-#define THIRD_SHIFT_180                 1000.0f
+#define THIRD_S44S_MAX_SPEED            4000.0f
+#define THIRD_SHIFT_LARGE               20.0f
+#define THIRD_SHIFT_270                 20.0f
+#define THIRD_SHIFT_180                 20.0f
 #define THIRD_SHIFT_90                  6500.0f
-#define THIRD_SHIFT_45                  5000.0f
+#define THIRD_SHIFT_45                  5000.0f   //5000.0f
+#define THIRD_SHIFT_S44S                5000.0f
 #define THIRD_SHIFT_PARTS               1000.0f
 #define THIRD_SHIFT_CONT45              3000.0f
-#define THIRD_SHIFT_STRAIGHT            1000.0f
+#define THIRD_SHIFT_STRAIGHT            20.0f
 
 #define THIRD_LONG_ACCEL                2900
 #define THIRD_MIDDLE_ACCEL              2000
@@ -45,6 +47,14 @@ static uint8_t extreme_is_straight(const volatile race_info *line)
 {
     return ((line != NULL) &&
             ((line->int32turn_dir & (STRAIGHT | END_TURN)) != 0))
+               ? 1u
+               : 0u;
+}
+
+static uint8_t extreme_is_short_straight(const volatile race_info *line)
+{
+    return ((extreme_is_straight(line) != 0u) &&
+            (line->int32dist < MID_DIST))
                ? 1u
                : 0u;
 }
@@ -133,6 +143,20 @@ static uint8_t extreme_is_s44s_start(uint16_t mark, uint16_t total)
             (extreme_is_straight(&search_info[mark + 3u]) != 0u))
                ? 1u
                : 0u;
+}
+
+static uint8_t extreme_is_s44s_transition(uint16_t mark, uint16_t total)
+{
+    if ((extreme_is_s44s_start(mark, total) != 0u) ||
+        ((mark >= 1u) &&
+         (extreme_is_s44s_start((uint16_t)(mark - 1u), total) != 0u)) ||
+        ((mark >= 2u) &&
+         (extreme_is_s44s_start((uint16_t)(mark - 2u), total) != 0u)))
+    {
+        return 1u;
+    }
+
+    return 0u;
 }
 
 static float extreme_turn_magnitude(const volatile race_info *line)
@@ -239,6 +263,29 @@ static void extreme_mark_zero_range(int32_t first, int32_t last)
     }
 }
 
+static void extreme_mark_zero_exact_range(int32_t first, int32_t last)
+{
+    const uint16_t total = extreme_total_count();
+
+    if (first < 0)
+    {
+        first = 0;
+    }
+    if (last > (int32_t)total)
+    {
+        last = (int32_t)total;
+    }
+    if (first > last)
+    {
+        return;
+    }
+
+    for (int32_t mark = first; mark <= last; mark++)
+    {
+        search_info[(uint16_t)mark].ShiftZeroPrepare_U16 = ON;
+    }
+}
+
 static void x_exception_mark_func(void)
 {
     const uint16_t total = extreme_total_count();
@@ -274,32 +321,31 @@ static void x_exception_mark_func(void)
         }
     }
 
-    if (X90_CONT_LIMIT_OFF_U16 == OFF)
+    mark = 0u;
+    while (mark <= total)
     {
-        mark = 0u;
-        while (mark <= total)
+        if (extreme_is_90(&search_info[mark]) != 0u)
         {
-            if (extreme_is_90(&search_info[mark]) != 0u)
-            {
-                const uint16_t run_start = mark;
-                uint16_t run_count = 0u;
+            const uint16_t run_start = mark;
+            uint16_t run_count = 0u;
 
-                while ((mark <= total) &&
-                       (extreme_is_90(&search_info[mark]) != 0u))
-                {
-                    run_count++;
-                    mark++;
-                }
-
-                if (run_count >= X_90_CONTINUOUS_MIN)
-                {
-                    extreme_mark_zero_range((int32_t)run_start, (int32_t)mark - 1);
-                }
-            }
-            else
+            while ((mark <= total) &&
+                   (extreme_is_90(&search_info[mark]) != 0u))
             {
+                run_count++;
                 mark++;
             }
+
+            if ((run_count >= 2u) &&
+                ((run_count < X_90_CONTINUOUS_MIN) ||
+                 (X90_CONT_LIMIT_OFF_U16 == OFF)))
+            {
+                extreme_mark_zero_range((int32_t)run_start, (int32_t)mark - 1);
+            }
+        }
+        else
+        {
+            mark++;
         }
     }
 
@@ -315,6 +361,76 @@ static void x_exception_mark_func(void)
                  (search_info[mark].int32dist >= MID_DIST)))
             {
                 extreme_mark_zero_range((int32_t)mark, (int32_t)mark + 2);
+            }
+        }
+    }
+
+    if (total >= 4u)
+    {
+        mark = 0u;
+        while (mark <= total)
+        {
+            if (extreme_is_45(&search_info[mark]) != 0u)
+            {
+                const uint16_t run_start = mark;
+                uint16_t run_end = mark;
+                uint16_t run_count = 1u;
+                uint8_t previous_same_turn = 0u;
+                uint8_t next_same_turn = 0u;
+                int32_t first;
+                int32_t last;
+
+                while ((uint16_t)(run_end + 2u) <= total &&
+                       (extreme_is_short_straight(&search_info[run_end + 1u]) != 0u) &&
+                       (extreme_is_45(&search_info[run_end + 2u]) != 0u) &&
+                       (extreme_same_turn_direction(&search_info[run_start],
+                                                    &search_info[run_end + 2u]) != 0u))
+                {
+                    run_end = (uint16_t)(run_end + 2u);
+                    run_count++;
+                }
+
+                if (run_count >= 2u)
+                {
+                    if ((run_start >= 2u) &&
+                        (extreme_is_short_straight(&search_info[run_start - 1u]) != 0u) &&
+                        (extreme_is_curve(&search_info[run_start - 2u]) != 0u) &&
+                        (extreme_is_45(&search_info[run_start - 2u]) == 0u) &&
+                        (extreme_same_turn_direction(&search_info[run_start - 2u],
+                                                     &search_info[run_start]) != 0u))
+                    {
+                        previous_same_turn = 1u;
+                    }
+
+                    if (((uint16_t)(run_end + 2u) <= total) &&
+                        (extreme_is_short_straight(&search_info[run_end + 1u]) != 0u) &&
+                        (extreme_is_curve(&search_info[run_end + 2u]) != 0u) &&
+                        (extreme_is_45(&search_info[run_end + 2u]) == 0u) &&
+                        (extreme_same_turn_direction(&search_info[run_start],
+                                                     &search_info[run_end + 2u]) != 0u))
+                    {
+                        next_same_turn = 1u;
+                    }
+
+                    if ((previous_same_turn != 0u) || (next_same_turn != 0u))
+                    {
+                        first = (run_start > 0u) &&
+                                (extreme_is_short_straight(&search_info[run_start - 1u]) != 0u)
+                                    ? (int32_t)run_start - 1
+                                    : (int32_t)run_start;
+                        last = ((uint16_t)(run_end + 1u) <= total) &&
+                               (extreme_is_short_straight(&search_info[run_end + 1u]) != 0u)
+                                   ? (int32_t)run_end + 1
+                                   : (int32_t)run_end;
+                        extreme_mark_zero_exact_range(first, last);
+                    }
+                }
+
+                mark = (uint16_t)(run_end + 1u);
+            }
+            else
+            {
+                mark++;
             }
         }
     }
@@ -431,7 +547,10 @@ static void x_exception_apply_func(void)
         }
     }
 }
-static float extreme_x_velocity(float distance, float current_velocity, int32_t accel)
+static float extreme_x_velocity(float distance,
+                                float current_velocity,
+                                int32_t accel,
+                                float speed_limit)
 
 {
     float velocity;
@@ -451,15 +570,49 @@ static float extreme_x_velocity(float distance, float current_velocity, int32_t 
 
     velocity = sqrtf((current_velocity * current_velocity) +
                      (2.0f * (float)accel * distance));
-    if (velocity > THIRD_CONTINUOUS_TURN_MAX_SPEED)
+    if (velocity > speed_limit)
     {
-        velocity = THIRD_CONTINUOUS_TURN_MAX_SPEED;
+        velocity = speed_limit;
     }
     if (velocity < (float)MOTOR_SPEED_U32)
     {
         velocity = (float)MOTOR_SPEED_U32;
     }
     return velocity;
+}
+
+static void extreme_senior_decel_compute(float current_velocity,
+                                         float target_velocity,
+                                         float *decel_distance,
+                                         float *decel_accel)
+{
+    float current_accel;
+    float target_accel;
+    float average_accel;
+    float velocity_difference;
+
+    if ((decel_distance == NULL) || (decel_accel == NULL))
+    {
+        return;
+    }
+
+    current_accel = MAX_ACC - (ACC_GRADIENT * current_velocity);
+    target_accel = MAX_ACC - (ACC_GRADIENT * target_velocity);
+    average_accel = (current_accel + target_accel) * 0.5f;
+    if (average_accel < 1.0f)
+    {
+        average_accel = 1.0f;
+    }
+
+    velocity_difference = (current_velocity * current_velocity) -
+                          (target_velocity * target_velocity);
+    if (velocity_difference < 0.0f)
+    {
+        velocity_difference = -velocity_difference;
+    }
+
+    *decel_distance = velocity_difference / (2.0f * average_accel);
+    *decel_accel = average_accel;
 }
 
 void chop_sdist_targetshift_compute(volatile race_info *pinfo, int32_t mark)
@@ -589,7 +742,14 @@ void chop_sdist_targetshift_func(void)
 
     for (uint16_t mark = 0u; mark <= total; mark++)
     {
-        if ((extreme_is_45(&search_info[mark]) != 0u) &&
+        if (((mark >= 1u) &&
+             (extreme_is_s44s_start((uint16_t)(mark - 1u), total) != 0u)) ||
+            ((mark >= 2u) &&
+             (extreme_is_s44s_start((uint16_t)(mark - 2u), total) != 0u)))
+        {
+            search_info[mark].target_shift = THIRD_SHIFT_S44S;
+        }
+        else if ((extreme_is_45(&search_info[mark]) != 0u) &&
             (extreme_is_cont45_3over(mark, total) != 0u))
         {
             search_info[mark].target_shift = THIRD_SHIFT_CONT45;
@@ -669,6 +829,7 @@ void turn_maxvel_compute(volatile race_info *pinfo, int32_t mark)
     volatile race_info *next;
     int32_t accel;
     float x_velocity;
+    float speed_limit;
 
     if ((pinfo == NULL) || (mark < 0) || ((uint16_t)mark > total))
     {
@@ -783,9 +944,13 @@ void turn_maxvel_compute(volatile race_info *pinfo, int32_t mark)
 
     pinfo->int32accel = accel;
     next->int32accel = accel;
+    speed_limit = (extreme_is_s44s_transition((uint16_t)mark, total) != 0u)
+                      ? THIRD_S44S_MAX_SPEED
+                      : THIRD_CONTINUOUS_TURN_MAX_SPEED;
     x_velocity = extreme_x_velocity((float)next->int32dist,
                                     next->out_vel,
-                                    accel);
+                                    accel,
+                                    speed_limit);
     pinfo->x_vel = x_velocity;
     pinfo->out_vel = x_velocity;
     next->in_vel = x_velocity;
@@ -1014,7 +1179,23 @@ void x_maxvel_compute(volatile race_info *pinfo, int32_t mark)
                         &computed_velocity);
         pinfo->vel = computed_velocity;
 
-        /* The original 3rd-race code keeps turn_maxvel() boundary speeds. */
+        if (pinfo->in_vel > pinfo->out_vel)
+        {
+            pinfo->in_vel = pinfo->vel;
+            if (mark > 0)
+            {
+                search_info[(uint16_t)mark - 1u].out_vel = pinfo->in_vel;
+            }
+        }
+        else
+        {
+            pinfo->out_vel = pinfo->vel;
+            if ((uint16_t)mark < extreme_total_count())
+            {
+                search_info[(uint16_t)mark + 1u].in_vel = pinfo->out_vel;
+            }
+        }
+
         if (mark == 0)
         {
             pinfo->in_vel = 0.0f;
@@ -1051,6 +1232,57 @@ void x_maxvel_func(void)
         {
             x_maxvel_compute(&search_info[mark], (int32_t)mark);
         }
+    }
+}
+
+static void extreme_s44s_senior_decel_func(void)
+{
+    const uint16_t total = extreme_total_count();
+
+    for (uint16_t mark = 0u; (uint16_t)(mark + 3u) <= total; mark++)
+    {
+        volatile race_info *end_straight;
+        float decel_distance;
+        float decel_accel;
+        uint8_t blocked = 0u;
+
+        if (extreme_is_s44s_start(mark, total) == 0u)
+        {
+            continue;
+        }
+
+        for (uint16_t offset = 0u; offset <= 3u; offset++)
+        {
+            if ((search_info[mark + offset].ShiftZeroPrepare_U16 != OFF) ||
+                (search_info[mark + offset].ShiftZeroHold_U16 != OFF))
+            {
+                blocked = 1u;
+                break;
+            }
+        }
+        if (blocked != 0u)
+        {
+            continue;
+        }
+
+        end_straight = &search_info[mark + 3u];
+        if ((end_straight->int32turn_dir & END_TURN) != 0)
+        {
+            continue;
+        }
+
+        extreme_senior_decel_compute(end_straight->vel,
+                                     end_straight->out_vel,
+                                     &decel_distance,
+                                     &decel_accel);
+
+        if (decel_distance > (float)end_straight->int32dist)
+        {
+            decel_distance = (float)end_straight->int32dist;
+        }
+
+        end_straight->dec_dist = decel_distance;
+        end_straight->decel_acc = decel_accel;
     }
 }
 
@@ -1317,6 +1549,7 @@ uint8_t Extreme_ProfileBuild(void)
     x_acc_func();
     turn_maxvel_func();
     x_maxvel_func();
+    extreme_s44s_senior_decel_func();
     chop_sdist_targetshift_func();
     kp_division_func();
     x_exception_apply_func();

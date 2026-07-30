@@ -111,8 +111,8 @@ void Race_Init(void)
     S4_KP_U32 = 29u;
     S9999S_KP_U32 = 10u;
     SHARP_KP_U32 = 40u;
-    mid_long_straight = 25u;
-    short_straight = 25u;
+    mid_long_straight = 37u;
+    short_straight = 37u;
     s44s_end_s = 50u;
     load_speed_handle_rom();
 
