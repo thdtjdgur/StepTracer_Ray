@@ -28,6 +28,7 @@ uint32_t Sensor_GetAdcErrorCount(void);
 uint32_t Sensor_GetMissedTickCount(void);
 uint32_t Sensor_GetOverrunCount(void);
 void Sensor_TimerIrqHandler(void);
+void Sensor_AdcIrqHandler(void);
 void Sensor_CalibrationStartMax(void);
 void Sensor_CalibrationStartMin(void);
 void Sensor_CalibrationStop(void);

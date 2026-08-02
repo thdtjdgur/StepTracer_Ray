@@ -108,11 +108,11 @@ void Race_Init(void)
     S44S_short_KP_U32 = 6u;
     S44S_long_KP_U32 = 6u;
     S4444S_KP_U32 = 37u;
-    S4_KP_U32 = 29u;
-    S9999S_KP_U32 = 10u;
-    SHARP_KP_U32 = 40u;
+    S4_KP_U32 = 21u;
+    S9999S_KP_U32 = 5u;
+    SHARP_KP_U32 = 33u;
     mid_long_straight = 37u;
-    short_straight = 37u;
+    short_straight = 34u;
     s44s_end_s = 50u;
     load_speed_handle_rom();
 

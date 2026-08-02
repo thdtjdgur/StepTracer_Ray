@@ -51,13 +51,13 @@ volatile int32_t DECEL_COEF_I32 = 256;
 volatile int32_t D_RATIO_I32 = 2;
 volatile int32_t U_RATIO_I32 = 2;
 volatile uint32_t Down_Kp_U32 = 5u;
-volatile uint32_t SHARP_KP_U32 = 40u;
+volatile uint32_t SHARP_KP_U32 = 30u;
 volatile uint32_t S44S_KP_U32 = 72u;
 volatile uint32_t S44S_short_KP_U32 = 6u;
 volatile uint32_t S44S_long_KP_U32 = 6u;
 volatile uint32_t S4444S_KP_U32 = 37u;
 volatile uint32_t S4_KP_U32 = 29u;
-volatile uint32_t S9999S_KP_U32 = 10u;
+volatile uint32_t S9999S_KP_U32 = 5u;
 volatile uint32_t mid_long_straight = 37u;  //25
 volatile uint32_t short_straight = 37u; //25
 volatile uint32_t s44s_end_s = 50u;
@@ -1027,9 +1027,7 @@ void CONTROL_ISR(void)
 
     segment_distance = (LMotor.RealDistance + RMotor.RealDistance) * 0.5f;
 
-    kp_target = ((zero_prepare != 0u) || (zero_hold != 0u))
-                    ? THIRD_FIXED_KP
-                    : line->Kp_UpDown;
+    kp_target = line->Kp_UpDown;
 
     if (HanPID.Kp_val < kp_target)
     {

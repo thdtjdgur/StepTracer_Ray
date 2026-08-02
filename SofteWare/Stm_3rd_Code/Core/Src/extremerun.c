@@ -6,19 +6,19 @@
 #include <math.h>
 #include <stddef.h>
 
-#define THIRD_KP_FLOOR 0.20f
+#define THIRD_KP_FLOOR 0.05f//0.16f
 
-#define THIRD_CONTINUOUS_TURN_MAX_SPEED 2500.0f
-#define THIRD_S44S_MAX_SPEED            4000.0f
-#define THIRD_SHIFT_LARGE               20.0f
-#define THIRD_SHIFT_270                 20.0f
-#define THIRD_SHIFT_180                 20.0f
+#define THIRD_CONTINUOUS_TURN_MAX_SPEED 2500.0f//2500.0f
+#define THIRD_S44S_MAX_SPEED            4000.0f//4000.0f
+#define THIRD_SHIFT_LARGE               1000.0f
+#define THIRD_SHIFT_270                 1000.0f
+#define THIRD_SHIFT_180                 100.0f
 #define THIRD_SHIFT_90                  6500.0f
-#define THIRD_SHIFT_45                  5000.0f   //5000.0f
+#define THIRD_SHIFT_45                  5000.0f
 #define THIRD_SHIFT_S44S                5000.0f
 #define THIRD_SHIFT_PARTS               1000.0f
 #define THIRD_SHIFT_CONT45              3000.0f
-#define THIRD_SHIFT_STRAIGHT            20.0f
+#define THIRD_SHIFT_STRAIGHT            1000.0f
 
 #define THIRD_LONG_ACCEL                2900
 #define THIRD_MIDDLE_ACCEL              2000
@@ -121,6 +121,14 @@ static uint8_t extreme_is_180_or_larger(const volatile race_info *line)
 {
     return ((line != NULL) &&
             ((line->int32turn_dir & (TURN_180 | TURN_270 | LARGE_TURN)) != 0))
+               ? 1u
+               : 0u;
+}
+
+static uint8_t extreme_is_90_or_larger(const volatile race_info *line)
+{
+    return ((extreme_is_90(line) != 0u) ||
+            (extreme_is_180_or_larger(line) != 0u))
                ? 1u
                : 0u;
 }
@@ -435,6 +443,21 @@ static void x_exception_mark_func(void)
         }
     }
 
+    if (total >= 4u)
+    {
+        for (mark = 0u; (uint16_t)(mark + 4u) <= total; mark++)
+        {
+            if ((extreme_is_90_or_larger(&search_info[mark]) != 0u) &&
+                (extreme_is_short_straight(&search_info[mark + 1u]) != 0u) &&
+                (extreme_is_45(&search_info[mark + 2u]) != 0u) &&
+                (extreme_is_short_straight(&search_info[mark + 3u]) != 0u) &&
+                (extreme_is_90_or_larger(&search_info[mark + 4u]) != 0u))
+            {
+                extreme_mark_zero_exact_range((int32_t)mark, (int32_t)mark + 4);
+            }
+        }
+    }
+
     for (mark = 0u; mark <= total; mark++)
     {
         if (extreme_is_180_or_larger(&search_info[mark]) != 0u)
@@ -511,11 +534,30 @@ static void x_exception_mark_func(void)
             }
         }
     }
+    /* 
+     *  [연속 90도 턴 + 합성턴 해제 로직]
+     * 2~5개 연속 90도 턴의 '마지막 90도 턴' 바로 뒤에 합성턴(S-45-45-S 또는 45도)이 이어지면,
+     * 마지막 90도 턴을 합성턴과 부드럽게 이어서 돌기 위해 위험 구간(ShiftZero)을 해제(OFF)한다!
+     */
+    for (mark = 1u; mark <= total; mark++)
+    {
+        if ((extreme_is_90(&search_info[mark]) != 0u) &&                             // 현재가 90도 턴이고
+            ((uint16_t)(mark + 1u) <= total) &&
+            (extreme_is_90(&search_info[mark + 1u]) == 0u) &&                        // 여기가 90도 연속 턴의 '마지막 90도'!
+            ((extreme_is_s44s_start((uint16_t)(mark + 1u), total) != 0u) ||          // 바로 뒤가 S-45-45-S 합성턴이거나
+             (extreme_is_45(&search_info[mark + 1u]) != 0u)))                        // 45도 합성턴인 경우
+        {
+            search_info[mark].ShiftZeroPrepare_U16 = OFF;                            // 위험 구간 해제!
+            search_info[mark].ShiftZeroHold_U16 = OFF;
+        }
+    }
+
 }
 
 static void x_exception_apply_func(void)
 {
     const uint16_t total = extreme_total_count();
+    const float kp_sharp = extreme_kp_value(SHARP_KP_U32);
 
     for (uint16_t mark = 0u; mark <= total; mark++)
     {
@@ -537,16 +579,53 @@ static void x_exception_apply_func(void)
             {
                 if ((search_info[mark + 1u].int32turn_dir & STRAIGHT) != 0)
                 {
-                    line->chop_shift_after = search_info[mark + 1u].chop_shift_after;
+                    line->chop_shift_after =
+                        search_info[mark + 1u].chop_shift_after;
                 }
                 else
                 {
-                    line->chop_shift_after = search_info[mark + 1u].chop_shift_before;
+                    if ((extreme_is_straight(line) != 0u) &&
+                        (extreme_is_curve(&search_info[mark + 1u]) != 0u))
+                    {
+                        line->chop_shift_after = 0.0f;
+                    }
+                    else
+                    {
+                        line->chop_shift_after =
+                            search_info[mark + 1u].chop_shift_before;
+                    }
                 }
             }
         }
     }
+
+/*
+ * 앞 구간 종류와 관계없이 연속 45도 3개 이상의 시작:
+ * 첫 번째 45도만 SHARP_KP 적용
+ *
+ * 앞 구간 종류와 관계없이 연속 90도 2개 이상의 시작:
+ * 첫 번째 90도만 SHARP_KP 적용
+ */
+    for (uint16_t mark = 0u; mark < total; mark++)
+    {
+        if ((extreme_is_45(&search_info[mark]) != 0u) &&
+            (extreme_is_45(&search_info[mark + 1u]) != 0u) &&
+            (extreme_is_cont45_3over(mark, total) != 0u) &&
+            ((mark == 0u) ||
+             (extreme_is_45(&search_info[mark - 1u]) == 0u)))
+        {
+            extreme_assign_kp(mark, kp_sharp, 1u);
+        }
+        else if ((extreme_is_90(&search_info[mark]) != 0u) &&
+                 (extreme_is_90(&search_info[mark + 1u]) != 0u) &&
+                 ((mark == 0u) ||
+                  (extreme_is_90(&search_info[mark - 1u]) == 0u)))
+        {
+            extreme_assign_kp(mark, kp_sharp, 1u);
+        }
+    }
 }
+
 static float extreme_x_velocity(float distance,
                                 float current_velocity,
                                 int32_t accel,
@@ -1417,14 +1496,7 @@ void kp_division_compute(volatile race_info *pinfo, int32_t mark)
                     kp_skip_count++;
                     kp_division_compute(next, mark + 1);
 
-                    if ((previous != NULL) && (extreme_is_straight(previous) != 0u))
-                    {
-                        extreme_assign_kp((uint16_t)mark, kp_sharp, 1u);
-                    }
-                    else
-                    {
-                        extreme_assign_kp((uint16_t)mark, kp_down, 1u);
-                    }
+                    extreme_assign_kp((uint16_t)mark, kp_sharp, 1u);
                     extreme_assign_kp((uint16_t)mark + 1u, kp_down, 1u);
                     return;
                 }
