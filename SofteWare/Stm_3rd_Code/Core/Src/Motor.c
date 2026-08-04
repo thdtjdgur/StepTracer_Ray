@@ -718,19 +718,34 @@ uint32_t Motor_PeriodCountsFromVelocity(float velocity_mm_s)
     return (uint32_t)(counts + 0.5f);
 }
 
-static void control_shift_to_zero(void)
+static void control_shift_to_zero(float requested_step)
 {
-    if (control_position_shift > THIRD_SHIFT_ZERO_STEP)
+    float zero_step = fabsf(requested_step);
+
+    /*
+     * 원래 chop이 강제 제한보다 작으면 원래 chop 사용.
+     * 0이나 비정상 값이면 기존 강제값 사용.
+     */
+    if ((!isfinite(zero_step)) ||
+        (zero_step <= 0.0f) ||
+        (zero_step > THIRD_SHIFT_ZERO_STEP))
     {
-        control_position_shift -= THIRD_SHIFT_ZERO_STEP;
+        zero_step = THIRD_SHIFT_ZERO_STEP;
+    }
+
+    if (control_position_shift > zero_step)
+    {
+        control_position_shift -= zero_step;
+
         if (control_position_shift < 0.0f)
         {
             control_position_shift = 0.0f;
         }
     }
-    else if (control_position_shift < -THIRD_SHIFT_ZERO_STEP)
+    else if (control_position_shift < -zero_step)
     {
-        control_position_shift += THIRD_SHIFT_ZERO_STEP;
+        control_position_shift += zero_step;
+
         if (control_position_shift > 0.0f)
         {
             control_position_shift = 0.0f;
@@ -1072,7 +1087,20 @@ void CONTROL_ISR(void)
             }
             else
             {
-                control_shift_to_zero();
+                float zero_step = THIRD_SHIFT_ZERO_STEP;
+
+    /*
+     * 바로 이전 구간이 안전이면:
+     * 현재 위험구간의 원래 chop과 강제 제한값을 비교한다.
+     */
+                if ((U16_3rd_turnmark_cnt > 0u) &&
+                    (search_info[U16_3rd_turnmark_cnt - 1u].ShiftZeroPrepare_U16 == OFF) &&
+                    (search_info[U16_3rd_turnmark_cnt - 1u].ShiftZeroHold_U16 == OFF))
+                {
+                    zero_step = line->chop_shift_before;
+                }
+
+                control_shift_to_zero(zero_step);
             }
         }
         else

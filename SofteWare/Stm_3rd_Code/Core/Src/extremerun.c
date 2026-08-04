@@ -17,7 +17,7 @@
 #define THIRD_SHIFT_45                  5000.0f
 #define THIRD_SHIFT_S44S                5000.0f
 #define THIRD_SHIFT_PARTS               1000.0f
-#define THIRD_SHIFT_CONT45              3000.0f
+#define THIRD_SHIFT_CONT45              2000.0f
 #define THIRD_SHIFT_STRAIGHT            1000.0f
 
 #define THIRD_LONG_ACCEL                2900
@@ -25,6 +25,8 @@
 #define THIRD_SHORT_ACCEL               500
 #define THIRD_START_ACCEL               3500
 #define THIRD_END_ACCEL                 2800
+
+#define EXTREME_PATTERN_90_OR_LARGER 255u
 
 static uint16_t turn_skip_count;
 static int32_t turn_distance;
@@ -151,6 +153,81 @@ static uint8_t extreme_is_s44s_start(uint16_t mark, uint16_t total)
             (extreme_is_straight(&search_info[mark + 3u]) != 0u))
                ? 1u
                : 0u;
+}
+
+static uint16_t extreme_protected_composite_length(uint16_t mark,
+                                                     uint16_t total)
+{
+    if (extreme_is_s44s_start(mark, total) != 0u)
+    {
+        return 4u;
+    }
+
+    if (((uint32_t)mark + 4u <= total) &&
+        (extreme_is_straight(&search_info[mark]) != 0u) &&
+        (extreme_is_45(&search_info[mark + 1u]) != 0u) &&
+        (extreme_is_90(&search_info[mark + 2u]) != 0u) &&
+        (extreme_is_45(&search_info[mark + 3u]) != 0u) &&
+        (extreme_is_straight(&search_info[mark + 4u]) != 0u))
+    {
+        return 5u;
+    }
+
+    return 0u;
+}
+
+static uint16_t extreme_cont45_join_length(uint16_t mark, uint16_t total)
+{
+    const uint16_t protected_length =
+        extreme_protected_composite_length(mark, total);
+
+    /*
+     * 직-45-45-직
+     * 직-45-90-45-직
+     */
+    if (protected_length != 0u)
+    {
+        return protected_length;
+    }
+
+    /*
+     * 짧은 직선-45-짧은 직선
+     */
+    if (((uint32_t)mark + 2u <= total) &&
+        (extreme_is_short_straight(&search_info[mark]) != 0u) &&
+        (extreme_is_45(&search_info[mark + 1u]) != 0u) &&
+        (extreme_is_short_straight(&search_info[mark + 2u]) != 0u))
+    {
+        return 3u;
+    }
+
+    return 0u;
+}
+
+static uint8_t extreme_is_cont45_join_end(uint16_t mark, uint16_t total)
+{
+    /* 짧직-45-짧직의 마지막 직선인지 확인 */
+    if ((mark >= 2u) &&
+        (extreme_cont45_join_length((uint16_t)(mark - 2u), total) == 3u))
+    {
+        return 1u;
+    }
+
+    /* 직-45-45-직의 마지막 직선인지 확인 */
+    if ((mark >= 3u) &&
+        (extreme_cont45_join_length((uint16_t)(mark - 3u), total) == 4u))
+    {
+        return 1u;
+    }
+
+    /* 직-45-90-45-직의 마지막 직선인지 확인 */
+    if ((mark >= 4u) &&
+        (extreme_cont45_join_length((uint16_t)(mark - 4u), total) == 5u))
+    {
+        return 1u;
+    }
+
+    return 0u;
 }
 
 static uint8_t extreme_is_s44s_transition(uint16_t mark, uint16_t total)
@@ -294,11 +371,117 @@ static void extreme_mark_zero_exact_range(int32_t first, int32_t last)
     }
 }
 
+static void extreme_clear_zero_exact_range(int32_t first, int32_t last)
+{
+    const uint16_t total = extreme_total_count();
+
+    if (first < 0)
+    {
+        first = 0;
+    }
+    if (last > (int32_t)total)
+    {
+        last = (int32_t)total;
+    }
+    if (first > last)
+    {
+        return;
+    }
+
+    for (int32_t mark = first; mark <= last; mark++)
+    {
+        search_info[(uint16_t)mark].ShiftZeroPrepare_U16 = OFF;
+        search_info[(uint16_t)mark].ShiftZeroHold_U16 = OFF;
+    }
+}
+
+static uint8_t extreme_match_angle(uint16_t mark, uint8_t angle)
+{
+    if (angle == 45u)
+    {
+        return extreme_is_45(&search_info[mark]);
+    }
+    if (angle == 90u)
+    {
+        return extreme_is_90(&search_info[mark]);
+    }
+    if (angle == EXTREME_PATTERN_90_OR_LARGER)
+    {
+    return extreme_is_90_or_larger(&search_info[mark]);
+}
+
+return 0u;
+}
+
+static uint8_t extreme_match_pattern(uint16_t start,
+                                     uint16_t total,
+                                     const uint8_t *pattern,
+                                     uint16_t length)
+{
+    if ((pattern == NULL) ||
+        (((uint32_t)start + (uint32_t)length) > ((uint32_t)total + 1u)))
+    {
+        return 0u;
+    }
+
+    for (uint16_t offset = 0u; offset < length; offset++)
+    {
+        if (extreme_match_angle((uint16_t)(start + offset),
+                                pattern[offset]) == 0u)
+        {
+            return 0u;
+        }
+    }
+
+    return 1u;
+}
+
+static uint16_t extreme_new_danger_pattern_length(uint16_t start,
+                                                   uint16_t total)
+{
+    static const uint8_t patterns[9][5] =
+    {
+        {90u, 45u, 45u, 90u, 0u},
+        {90u, 90u, 45u, 45u, 0u},
+        {90u, 45u, 90u, 45u, 0u},
+        {45u, 90u, 45u, 90u, 0u},
+
+        {45u, 45u, 90u, 0u, 0u},
+        {90u, 45u, 45u, 0u, 0u},
+        {90u, 90u, 45u, 0u, 0u},
+        {45u, 90u, 90u, 0u, 0u},
+
+        /* 45-90-45-45-90도 이상 */
+        {45u, 90u, 45u, 45u, EXTREME_PATTERN_90_OR_LARGER}
+    };
+
+    static const uint8_t lengths[9] =
+    {
+        4u, 4u, 4u, 4u,
+        3u, 3u, 3u, 3u,
+        5u
+    };
+
+    for (uint16_t pattern_index = 0u;
+         pattern_index < 9u;
+         pattern_index++)
+    {
+        if (extreme_match_pattern(start,
+                                  total,
+                                  patterns[pattern_index],
+                                  lengths[pattern_index]) != 0u)
+        {
+            return lengths[pattern_index];
+        }
+    }
+
+    return 0u;
+}
+
 static void x_exception_mark_func(void)
 {
     const uint16_t total = extreme_total_count();
     uint16_t mark;
-    uint16_t clear_mark;
 
     if (X45_CONT_LIMIT_OFF_U16 == OFF)
     {
@@ -458,7 +641,7 @@ static void x_exception_mark_func(void)
         }
     }
 
-    for (mark = 0u; mark <= total; mark++)
+        for (mark = 0u; mark <= total; mark++)
     {
         if (extreme_is_180_or_larger(&search_info[mark]) != 0u)
         {
@@ -470,6 +653,23 @@ static void x_exception_mark_func(void)
             }
 
             extreme_mark_zero_range((int32_t)mark, last);
+        }
+    }
+
+    /*
+     * 직선 - 45 - (180/270/LARGE)인 경우
+     * 45 앞의 직선까지 위험구간으로 확장한다.
+     *
+     * 45 앞이 턴이면 기존 알고리즘만 사용한다.
+     */
+    for (mark = 2u; mark <= total; mark++)
+    {
+        if ((extreme_is_straight(&search_info[mark - 2u]) != 0u) &&
+            (extreme_is_45(&search_info[mark - 1u]) != 0u) &&
+            (extreme_is_180_or_larger(&search_info[mark]) != 0u))
+        {
+            extreme_mark_zero_exact_range((int32_t)mark - 2,
+                                          (int32_t)mark);
         }
     }
 
@@ -521,37 +721,134 @@ static void x_exception_mark_func(void)
         }
     }
 
-    for (mark = 1u; (uint16_t)(mark + 3u) <= total; mark++)
+    for (mark = 0u; mark <= total; mark++)
     {
-        if (((search_info[mark - 1u].ShiftZeroPrepare_U16 != OFF) ||
-             (search_info[mark - 1u].ShiftZeroHold_U16 != OFF)) &&
-            (extreme_is_s44s_start(mark, total) != 0u))
+        const uint16_t pattern_length =
+            extreme_new_danger_pattern_length(mark, total);
+
+        if (pattern_length != 0u)
         {
-            for (clear_mark = mark; clear_mark <= (uint16_t)(mark + 3u); clear_mark++)
-            {
-                search_info[clear_mark].ShiftZeroPrepare_U16 = OFF;
-                search_info[clear_mark].ShiftZeroHold_U16 = OFF;
-            }
-        }
-    }
-    /* 
-     *  [연속 90도 턴 + 합성턴 해제 로직]
-     * 2~5개 연속 90도 턴의 '마지막 90도 턴' 바로 뒤에 합성턴(S-45-45-S 또는 45도)이 이어지면,
-     * 마지막 90도 턴을 합성턴과 부드럽게 이어서 돌기 위해 위험 구간(ShiftZero)을 해제(OFF)한다!
-     */
-    for (mark = 1u; mark <= total; mark++)
-    {
-        if ((extreme_is_90(&search_info[mark]) != 0u) &&                             // 현재가 90도 턴이고
-            ((uint16_t)(mark + 1u) <= total) &&
-            (extreme_is_90(&search_info[mark + 1u]) == 0u) &&                        // 여기가 90도 연속 턴의 '마지막 90도'!
-            ((extreme_is_s44s_start((uint16_t)(mark + 1u), total) != 0u) ||          // 바로 뒤가 S-45-45-S 합성턴이거나
-             (extreme_is_45(&search_info[mark + 1u]) != 0u)))                        // 45도 합성턴인 경우
-        {
-            search_info[mark].ShiftZeroPrepare_U16 = OFF;                            // 위험 구간 해제!
-            search_info[mark].ShiftZeroHold_U16 = OFF;
+            extreme_mark_zero_exact_range(
+                (int32_t)mark,
+                (int32_t)mark + (int32_t)pattern_length - 1);
         }
     }
 
+    /* These composite turns remain safe even when danger is adjacent. */
+    for (mark = 0u; mark <= total; mark++)
+    {
+        const uint16_t composite_length =
+            extreme_protected_composite_length(mark, total);
+
+        if (composite_length != 0u)
+        {
+            extreme_clear_zero_exact_range((int32_t)mark,
+                                           (int32_t)mark +
+                                               (int32_t)composite_length - 1);
+        }
+    }
+
+    mark = 0u;
+    while (mark <= total)
+    {
+        if (extreme_is_45(&search_info[mark]) != 0u)
+        {
+            const uint16_t run_start = mark;
+
+            while ((mark <= total) &&
+                   (extreme_is_45(&search_info[mark]) != 0u))
+            {
+                mark++;
+            }
+
+            const uint16_t run_end = (uint16_t)(mark - 1u);
+            const uint16_t run_count =
+                (uint16_t)(run_end - run_start + 1u);
+
+            if (run_count >= X_45_CONTINUOUS_MIN)
+            {
+                extreme_mark_zero_exact_range((int32_t)run_start,
+                                              (int32_t)run_start);
+                extreme_clear_zero_exact_range((int32_t)run_start + 1,
+                                               (int32_t)run_end);
+
+                if (((uint16_t)(run_end + 1u) <= total) &&
+                    (extreme_is_90(&search_info[run_end + 1u]) != 0u))
+                {
+                    extreme_clear_zero_exact_range((int32_t)run_end + 1,
+                                                   (int32_t)run_end + 1);
+                }
+            }
+        }
+        else
+        {
+            mark++;
+        }
+    }
+
+    for (mark = 1u; mark < total; mark++)
+    {
+        if ((extreme_is_90(&search_info[mark]) != 0u) &&
+            (extreme_is_45(&search_info[mark - 1u]) != 0u) &&
+            (extreme_is_45(&search_info[mark + 1u]) != 0u) &&
+            (extreme_is_cont45_3over((uint16_t)(mark - 1u), total) != 0u) &&
+            (extreme_is_cont45_3over((uint16_t)(mark + 1u), total) != 0u))
+        {
+            extreme_clear_zero_exact_range((int32_t)mark,
+                                           (int32_t)mark);
+        }
+    }
+
+    mark = 0u;
+    while (mark <= total)
+    {
+        if (extreme_is_90(&search_info[mark]) != 0u)
+        {
+            const uint16_t run_start = mark;
+
+            while ((mark <= total) &&
+                   (extreme_is_90(&search_info[mark]) != 0u))
+            {
+                mark++;
+            }
+
+            const uint16_t run_end = (uint16_t)(mark - 1u);
+            const uint16_t run_count =
+                (uint16_t)(run_end - run_start + 1u);
+
+        /*
+         * 연속 90 뒤가 45-직이면
+         * 마지막 90 + 45 + 직선 안전 처리
+         */
+            if ((run_count >= 2u) &&
+                ((uint16_t)(run_end + 2u) <= total) &&
+                (extreme_is_45(&search_info[run_end + 1u]) != 0u) &&
+                (extreme_is_straight(&search_info[run_end + 2u]) != 0u))
+            {
+                extreme_clear_zero_exact_range((int32_t)run_end,
+                                           (int32_t)run_end + 2);
+            }
+        else if ((run_count >= 2u) &&
+                ((uint16_t)(run_end + 1u) <= total))
+        {
+            const uint16_t composite_length =
+                extreme_protected_composite_length(
+                    (uint16_t)(run_end + 1u),
+                    total);
+
+                if (composite_length != 0u)
+                {
+                    extreme_clear_zero_exact_range(
+                    (int32_t)run_end,
+                    (int32_t)run_end + (int32_t)composite_length);
+                }
+            }
+        }
+        else
+        {
+            mark++;
+        }
+    }
 }
 
 static void x_exception_apply_func(void)
@@ -568,7 +865,7 @@ static void x_exception_apply_func(void)
         {
             line->Kp_UpDown = THIRD_FIXED_KP;
             line->DownFlag_U16 = OFF;
-            line->chop_shift_before = 0.0f;
+            //line->chop_shift_before = 0.0f;
             line->chop_shift_after = 0.0f;
 
             if ((mark < total) &&
@@ -622,6 +919,17 @@ static void x_exception_apply_func(void)
                   (extreme_is_90(&search_info[mark - 1u]) == 0u)))
         {
             extreme_assign_kp(mark, kp_sharp, 1u);
+        }
+    }
+
+    /* 연속 45도 3개 이상의 마지막 45는 항상 S4444S_KP */
+    for (uint16_t mark = 0u; mark <= total; mark++)
+    {
+        if (extreme_is_cont45_end(mark, total) != 0u)
+        {
+            extreme_assign_kp(mark,
+                              extreme_kp_value(S4444S_KP_U32),
+                              1u);
         }
     }
 }
@@ -919,19 +1227,32 @@ void turn_maxvel_compute(volatile race_info *pinfo, int32_t mark)
     {
         return;
     }
+/*
+ * 앞 구간이 지정 합성턴이면
+ * 연속 45 시작 직전에서 합성구간을 끊지 않는다.
+ */
     if (((uint16_t)mark < total) &&
         (extreme_is_45(pinfo) == 0u) &&
-        (extreme_is_cont45_start((uint16_t)mark + 1u, total) != 0u))
+        (extreme_is_cont45_start((uint16_t)mark + 1u, total) != 0u) &&
+        (extreme_is_cont45_join_end((uint16_t)mark, total) == 0u))
     {
         return;
     }
-    if (extreme_is_cont45_end((uint16_t)mark, total) != 0u)
+
+/*
+ * 뒤 구간이 지정 합성턴이면
+ * 연속 45 마지막에서 합성구간을 끊지 않는다.
+ */
+    if ((extreme_is_cont45_end((uint16_t)mark, total) != 0u) &&
+        (((uint16_t)mark >= total) ||
+        (extreme_cont45_join_length((uint16_t)mark + 1u, total) == 0u)))
     {
         return;
     }
+
     if ((turn_skip_count == 0u) &&
         ((uint16_t)mark + 3u <= total) &&
-        (extreme_is_curve(pinfo) != 0u) &&
+        (extreme_is_90_or_larger(pinfo) != 0u) &&
         (extreme_is_45(&search_info[(uint16_t)mark + 1u]) != 0u) &&
         (extreme_is_45(&search_info[(uint16_t)mark + 2u]) != 0u) &&
         (extreme_is_straight(&search_info[(uint16_t)mark + 3u]) != 0u))
@@ -1057,7 +1378,7 @@ void turn_maxvel_func(void)
             (search_info[mark].ShiftZeroHold_U16 != OFF))
         {
             if (((uint16_t)mark + 3u <= total) &&
-                (extreme_is_curve(&search_info[mark]) != 0u) &&
+                (extreme_is_90_or_larger(&search_info[mark]) != 0u) &&
                 (extreme_is_45(&search_info[mark + 1u]) != 0u) &&
                 (extreme_is_45(&search_info[mark + 2u]) != 0u) &&
                 (extreme_is_straight(&search_info[mark + 3u]) != 0u))

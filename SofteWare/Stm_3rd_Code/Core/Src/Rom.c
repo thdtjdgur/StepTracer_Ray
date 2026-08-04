@@ -1187,7 +1187,7 @@ void load_speed_handle_rom(void)
     DECEL_COEF_I32 = (raw_dec != 0xFFFFu) ? (int16_t)raw_dec : SPEED_HANDLE_DEFAULT_DECEL;
     g_u32_second_END_ACC_targetval = (raw_fast_end_acc != 0xFFFFu)
                                          ? raw_fast_end_acc
-                                         : 11500u;
+                                         : 10000u;
 }
 
 void save_handle_slew_rom(void)

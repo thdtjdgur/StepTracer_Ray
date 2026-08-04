@@ -29,7 +29,7 @@ typedef enum
 
 typedef enum
 {
-    TURN_45_DIST = 280,
+    TURN_45_DIST = 285,
     TURN_90_DIST = 400,
     TURN_180_DIST = 880,
     TURN_270_DIST = 1150

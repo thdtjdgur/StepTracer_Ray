@@ -72,15 +72,15 @@ void Variable_Init(void)
     g_u16pos_cnt = S_SIX;
     g_u16sen_enable = 0xffffu;
     g_u16sen_state = 0u;
-    g_u16turn_dist = 67u;
+    g_u16turn_dist = 53u;
     T___dist = g_u16turn_dist;
 
     U16_turnmark_cnt = 0u;
     U16_3rd_turnmark_cnt = 0u;
-    Turn_Cnt = 147u;
+    Turn_Cnt = 50u;
 
     position_shift = 0;
-    X45_CONT_LIMIT_OFF_U16 = OFF;
+    X45_CONT_LIMIT_OFF_U16 = ON;
     X90_CONT_LIMIT_OFF_U16 = OFF;
     std_dist = 824;
     Curvature_difference = 0;

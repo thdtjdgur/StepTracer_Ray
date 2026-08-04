@@ -15,7 +15,7 @@
 
 #include "stm32g4xx_ll_usart.h"
 
-#define FAST_MARK_UNDER_RATIO       0.60f
+#define FAST_MARK_UNDER_RATIO       0.70f
 #define FAST_MARK_ERROR_MARGIN_MM   150.0f
 #define THIRD_MARK_LEAD_DISTANCE_MM 50.0f//50.0f
 #define FAST_MAX_PROFILE_INDEX      253u
