@@ -20,7 +20,7 @@
 #define THIRD_MARK_LEAD_DISTANCE_MM 50.0f//50.0f
 #define FAST_MAX_PROFILE_INDEX      253u
 #define FAST_MAX_MARK_ERRORS        20u
-#define FAST_PROFILE_DUMP_UART      1u
+#define FAST_PROFILE_DUMP_UART      0u//2,3차 턴정보
 #define FAST_DEBUG_UART_TIMEOUT     1000000u
 #define FAST_DEBUG_BUFFER_SIZE      160u
 #define FAST_LONG_ACCEL             2900

@@ -439,31 +439,32 @@ static uint8_t extreme_match_pattern(uint16_t start,
 static uint16_t extreme_new_danger_pattern_length(uint16_t start,
                                                    uint16_t total)
 {
-    static const uint8_t patterns[9][5] =
+    static const uint8_t patterns[10][5] =
     {
-        {90u, 45u, 45u, 90u, 0u},
-        {90u, 90u, 45u, 45u, 0u},
-        {90u, 45u, 90u, 45u, 0u},
-        {45u, 90u, 45u, 90u, 0u},
+        {EXTREME_PATTERN_90_OR_LARGER, 45u, 45u, EXTREME_PATTERN_90_OR_LARGER, 0u},
+        {EXTREME_PATTERN_90_OR_LARGER, EXTREME_PATTERN_90_OR_LARGER, 45u, 45u, 0u},
+        {EXTREME_PATTERN_90_OR_LARGER, 45u, EXTREME_PATTERN_90_OR_LARGER, 45u, 0u},
+        {45u, EXTREME_PATTERN_90_OR_LARGER, 45u, EXTREME_PATTERN_90_OR_LARGER, 0u},
 
-        {45u, 45u, 90u, 0u, 0u},
-        {90u, 45u, 45u, 0u, 0u},
-        {90u, 90u, 45u, 0u, 0u},
-        {45u, 90u, 90u, 0u, 0u},
+        {45u, 45u, EXTREME_PATTERN_90_OR_LARGER, 0u, 0u},
+        {EXTREME_PATTERN_90_OR_LARGER, 45u, 45u, 0u, 0u},
+        {EXTREME_PATTERN_90_OR_LARGER, EXTREME_PATTERN_90_OR_LARGER, 45u, 0u, 0u},
+        {45u, EXTREME_PATTERN_90_OR_LARGER, EXTREME_PATTERN_90_OR_LARGER, 0u, 0u},
+        {EXTREME_PATTERN_90_OR_LARGER, 45u, EXTREME_PATTERN_90_OR_LARGER, 0u, 0u},
 
-        /* 45-90-45-45-90도 이상 */
-        {45u, 90u, 45u, 45u, EXTREME_PATTERN_90_OR_LARGER}
+        {45u, EXTREME_PATTERN_90_OR_LARGER, 45u, 45u,
+        EXTREME_PATTERN_90_OR_LARGER}
     };
 
-    static const uint8_t lengths[9] =
+    static const uint8_t lengths[10] =
     {
         4u, 4u, 4u, 4u,
-        3u, 3u, 3u, 3u,
-        5u
+        3u, 3u, 3u, 3u, 3u,
+        5u 
     };
 
     for (uint16_t pattern_index = 0u;
-         pattern_index < 9u;
+         pattern_index < 10u;
          pattern_index++)
     {
         if (extreme_match_pattern(start,
@@ -626,6 +627,52 @@ static void x_exception_mark_func(void)
         }
     }
 
+        /*
+     * 짧직-45-짧직-45-짧직 앞/뒤에
+     * 같은 방향 45가 붙으면 가운데 5구간 위험
+     */
+    if (total >= 4u)
+    {
+        for (mark = 0u; (uint16_t)(mark + 4u) <= total; mark++)
+        {
+            uint8_t previous_same_45 = 0u;
+            uint8_t next_same_45 = 0u;
+
+            if ((extreme_is_short_straight(&search_info[mark]) == 0u) ||
+                (extreme_is_45(&search_info[mark + 1u]) == 0u) ||
+                (extreme_is_short_straight(&search_info[mark + 2u]) == 0u) ||
+                (extreme_is_45(&search_info[mark + 3u]) == 0u) ||
+                (extreme_is_short_straight(&search_info[mark + 4u]) == 0u) ||
+                (extreme_same_turn_direction(&search_info[mark + 1u],
+                                             &search_info[mark + 3u]) == 0u))
+            {
+                continue;
+            }
+
+            if ((mark >= 1u) &&
+                (extreme_is_45(&search_info[mark - 1u]) != 0u) &&
+                (extreme_same_turn_direction(&search_info[mark - 1u],
+                                             &search_info[mark + 1u]) != 0u))
+            {
+                previous_same_45 = 1u;
+            }
+
+            if (((uint16_t)(mark + 5u) <= total) &&
+                (extreme_is_45(&search_info[mark + 5u]) != 0u) &&
+                (extreme_same_turn_direction(&search_info[mark + 1u],
+                                             &search_info[mark + 5u]) != 0u))
+            {
+                next_same_45 = 1u;
+            }
+
+            if ((previous_same_45 != 0u) || (next_same_45 != 0u))
+            {
+                extreme_mark_zero_exact_range((int32_t)mark,
+                                              (int32_t)mark + 4);
+            }
+        }
+    }
+
     if (total >= 4u)
     {
         for (mark = 0u; (uint16_t)(mark + 4u) <= total; mark++)
@@ -657,15 +704,14 @@ static void x_exception_mark_func(void)
     }
 
     /*
-     * 직선 - 45 - (180/270/LARGE)인 경우
-     * 45 앞의 직선까지 위험구간으로 확장한다.
-     *
-     * 45 앞이 턴이면 기존 알고리즘만 사용한다.
-     */
+    * 직선 - (45 또는 90) - (180/270/LARGE)인 경우
+    * 앞의 직선까지 세 구간 모두 위험 처리한다.
+    */
     for (mark = 2u; mark <= total; mark++)
     {
         if ((extreme_is_straight(&search_info[mark - 2u]) != 0u) &&
-            (extreme_is_45(&search_info[mark - 1u]) != 0u) &&
+            ((extreme_is_45(&search_info[mark - 1u]) != 0u) ||
+             (extreme_is_90(&search_info[mark - 1u]) != 0u)) &&
             (extreme_is_180_or_larger(&search_info[mark]) != 0u))
         {
             extreme_mark_zero_exact_range((int32_t)mark - 2,
@@ -703,18 +749,31 @@ static void x_exception_mark_func(void)
     {
         for (mark = 0u; (uint16_t)(mark + 3u) <= total; mark++)
         {
-            if ((((extreme_is_45(&search_info[mark + 1u]) != 0u) &&
+            const uint8_t mixed_45_90 =
+                (((extreme_is_45(&search_info[mark + 1u]) != 0u) &&
                   (extreme_is_90(&search_info[mark + 2u]) != 0u)) ||
                  ((extreme_is_90(&search_info[mark + 1u]) != 0u) &&
-                  (extreme_is_45(&search_info[mark + 2u]) != 0u))) &&
-                (((extreme_is_straight(&search_info[mark]) != 0u) &&
-                  (extreme_is_straight(&search_info[mark + 3u]) != 0u)) ||
-                 ((extreme_is_180_or_larger(&search_info[mark]) != 0u) &&
-                  (extreme_is_straight(&search_info[mark + 3u]) != 0u)) ||
-                 ((extreme_is_straight(&search_info[mark]) != 0u) &&
-                  (extreme_is_180_or_larger(&search_info[mark + 3u]) != 0u))))
+                  (extreme_is_45(&search_info[mark + 2u]) != 0u)));
+
+            if (mixed_45_90 == 0u)
             {
-                /* extreme_mark_zero_range() also marks first - 1. */
+                continue;
+            }
+
+        /* 180이상-(45-90 또는 90-45)-직:
+         * 마지막 직선은 제외하고 앞의 3구간만 위험
+         */
+            if ((extreme_is_180_or_larger(&search_info[mark]) != 0u) &&
+                (extreme_is_straight(&search_info[mark + 3u]) != 0u))
+            {
+                extreme_mark_zero_exact_range((int32_t)mark,
+                                              (int32_t)mark + 2);
+            }
+            else if (((extreme_is_straight(&search_info[mark]) != 0u) &&
+                      (extreme_is_straight(&search_info[mark + 3u]) != 0u)) ||
+                     ((extreme_is_straight(&search_info[mark]) != 0u) &&
+                      (extreme_is_180_or_larger(&search_info[mark + 3u]) != 0u)))
+            {
                 extreme_mark_zero_range((int32_t)mark + 1,
                                         (int32_t)mark + 3);
             }
@@ -767,10 +826,8 @@ static void x_exception_mark_func(void)
 
             if (run_count >= X_45_CONTINUOUS_MIN)
             {
-                extreme_mark_zero_exact_range((int32_t)run_start,
-                                              (int32_t)run_start);
-                extreme_clear_zero_exact_range((int32_t)run_start + 1,
-                                               (int32_t)run_end);
+                extreme_clear_zero_exact_range((int32_t)run_start,
+                                   (int32_t)run_end);
 
                 if (((uint16_t)(run_end + 1u) <= total) &&
                     (extreme_is_90(&search_info[run_end + 1u]) != 0u))
@@ -1834,13 +1891,28 @@ void kp_division_compute(volatile race_info *pinfo, int32_t mark)
             return;
         }
 
-        if ((next != NULL) && (extreme_is_90(next) != 0u))
+    if ((next != NULL) && (extreme_is_90(next) != 0u))
+    {
+        extreme_assign_kp((uint16_t)mark, kp_sharp, 1u);
+        extreme_assign_kp((uint16_t)mark + 1u, kp_sharp, 1u);
+
+    /* 직-45-90-45-직이면 두 번째 45도 첫 번째 45와 같은 Kp */
+        if ((previous != NULL) &&
+            (extreme_is_straight(previous) != 0u) &&
+            ((uint16_t)mark + 3u <= total) &&
+            (extreme_is_45(&search_info[(uint16_t)mark + 2u]) != 0u) &&
+            (extreme_is_straight(&search_info[(uint16_t)mark + 3u]) != 0u))
         {
-            extreme_assign_kp((uint16_t)mark, kp_sharp, 1u);
-            extreme_assign_kp((uint16_t)mark + 1u, kp_sharp, 1u);
-            kp_skip_count++;
-            return;
+            extreme_assign_kp((uint16_t)mark + 2u, kp_sharp, 1u);
+            kp_skip_count += 2u;
         }
+        else
+        {
+            kp_skip_count++;
+        }
+
+        return;
+    }
         return;
     }
 

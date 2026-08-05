@@ -102,8 +102,8 @@ void Race_Init(void)
     PID_Kp_U32 = 85u;
     ACCEL_COEF_I32 = 296;
     DECEL_COEF_I32 = 256;
-    D_RATIO_I32 = 2;
-    U_RATIO_I32 = 2;
+    D_RATIO_I32 = 3.5;
+    U_RATIO_I32 = 3.5;
     Down_Kp_U32 = 5u;
     S44S_short_KP_U32 = 6u;
     S44S_long_KP_U32 = 6u;
