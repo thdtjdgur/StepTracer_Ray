@@ -14,7 +14,7 @@ That multi-stage race strategy is the core idea of this project.
 
 ## Hardware Image
 
-![StepTracer hardware](assets/steptracer.png)
+![StepTracer hardware](assets/steptracer2.png)
 
 ## Demo Video
 
