@@ -435,7 +435,7 @@ void SensorBoardLed_Off(void)
 
 static void sensor_buzzer_on(void)
 {
-    LL_GPIO_SetOutputPin(GPIOC, BUZZER_PIN);
+    LL_GPIO_ResetOutputPin(GPIOC, BUZZER_PIN);
 }
 
 static void sensor_buzzer_off(void)
