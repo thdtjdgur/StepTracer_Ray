@@ -106,6 +106,57 @@ Related demo:
 - third-run lateral shift and gain scheduling
 - interrupt-driven sensor and motor control loop
 
+## Position Low-Pass Filter
+
+The STM32 control loop samples the line position every `200 us` (`5 kHz`). A first-order low-pass filter is used to reduce abrupt position changes and high-frequency sensor noise before the filtered position is used by the steering controller.
+
+The continuous-time filter is
+
+```text
+         wc
+H(s) = -------,    wc = 2*pi*Fc
+       s + wc
+```
+
+Applying the Tustin transform
+
+```text
+    2   1 - z^-1
+s = - * --------
+    T   1 + z^-1
+```
+
+produces the discrete coefficients
+
+```text
+Kb = wc*T / (2 + wc*T)
+Ka = (wc*T - 2) / (2 + wc*T)
+```
+
+and the difference equation
+
+```text
+y[n] = Kb * (x[n] + x[n-1]) - Ka * y[n-1]
+```
+
+which maps directly to C:
+
+```c
+filtered_position = Kb * (current_position + previous_position)
+                    - Ka * previous_filtered_position;
+```
+
+With the current default `Fc = 80 Hz` and `T = 0.0002 s`, the coefficients are `Kb = 0.04786` and `Ka = -0.90428`. For a position step from `0` to `5000`, the filtered output starts approximately as `239 -> 695 -> 1107`, instead of jumping directly to `5000`.
+
+The filtered position is used for the proportional term, while its sample-to-sample difference is used for the derivative term:
+
+```text
+P = Kp * y[n]
+D = Kd * (y[n] - y[n-1])
+```
+
+The cutoff frequency `Fc` is adjustable from the OLED menu. Lower values provide stronger smoothing but slower response; higher values follow the line position faster but pass more sensor noise.
+
 ## Detailed Code Analysis
 
 - Third-race deep dive: [`docs/extremerun-analysis.md`](docs/extremerun-analysis.md)
